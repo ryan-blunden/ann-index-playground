@@ -34,7 +34,7 @@ def current_rss_mb() -> float | None:
         return None
     try:
         return psutil_module.Process(os.getpid()).memory_info().rss / (1024 * 1024)
-    except OSError, AttributeError:
+    except (OSError, AttributeError):
         return None
 
 

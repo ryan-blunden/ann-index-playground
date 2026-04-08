@@ -379,21 +379,21 @@ uv run pylint ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_
 
 ## Code layout
 
-- [ann_app.py](/Users/rb/Projects/Actian/ann-indexes/ann_app.py)
+- [ann_app.py](./ann_app.py)
   - Streamlit UI, backend selection, and run history rendering
-- [ann_backend.py](/Users/rb/Projects/Actian/ann-indexes/ann_backend.py)
+- [ann_backend.py](./ann_backend.py)
   - shared backend settings and the small backend contract used by the app
-- [ann_faiss.py](/Users/rb/Projects/Actian/ann-indexes/ann_faiss.py)
+- [ann_faiss.py](./ann_faiss.py)
   - FAISS implementation, file-backed cache handling, and benchmark helpers
-- [ann_pgvector.py](/Users/rb/Projects/Actian/ann-indexes/ann_pgvector.py)
+- [ann_pgvector.py](./ann_pgvector.py)
   - pgvector implementation, database/index setup, and PostgreSQL-backed search execution
-- [pyproject.toml](/Users/rb/Projects/Actian/ann-indexes/pyproject.toml)
+- [pyproject.toml](./pyproject.toml)
   - project configuration, linting, and Python/tooling settings
-- [justfile](/Users/rb/Projects/Actian/ann-indexes/justfile)
+- [justfile](./justfile)
   - convenience commands for setup and local development
-- [tests/test_backend_contract.py](/Users/rb/Projects/Actian/ann-indexes/tests/test_backend_contract.py)
+- [tests/test_backend_contract.py](./tests/test_backend_contract.py)
   - FAISS backend contract tests on a tiny synthetic dataset
-- [tests/test_pgvector_backend.py](/Users/rb/Projects/Actian/ann-indexes/tests/test_pgvector_backend.py)
+- [tests/test_pgvector_backend.py](./tests/test_pgvector_backend.py)
   - pgvector integration tests against a temporary PostgreSQL database
 
 ## Notes
