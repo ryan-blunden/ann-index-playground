@@ -191,6 +191,14 @@ just setup
 just ui
 ```
 
+If you want to force the pgvector backend to rebuild its tables and indexes from scratch, reset the app database first:
+
+```bash
+just reset-pgvector
+```
+
+That drops and recreates only the database pointed to by `PGVECTOR_DATABASE_URL`.
+
 Important caveat:
 
 - if `pgvector` was installed against a different Postgres version than the server you are running, extension creation can fail
@@ -365,6 +373,8 @@ just format
 just lint
 just pylint
 just check
+just test
+just reset-pgvector
 just fix
 ```
 

@@ -192,7 +192,7 @@ class FaissBackend:
             if progress is not None:
                 progress(ProgressUpdate(current_step=current_step, total_steps=total_steps, message=message))
 
-        notify(f"Loading the first {self.settings.vector_count:,} vectors from SIFT1M...")
+        notify(f"Loading {self.settings.vector_count:,} vectors from SIFT1M...")
         xb_full, _, _ = self.dataset
         xb = np.ascontiguousarray(xb_full[: self.settings.vector_count])
         dimension = xb.shape[1]

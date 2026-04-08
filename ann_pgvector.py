@@ -81,7 +81,7 @@ class PgvectorBackend:
         with self._target_connection() as conn:
             self._ensure_extension_and_metadata(conn)
 
-            notify(f"Loading the first {self.settings.vector_count:,} vectors into Postgres...")
+            notify(f"Loading {self.settings.vector_count:,} vectors into Postgres...")
             self._ensure_flat_table(conn)
 
             if self.settings.include_hnsw:
@@ -101,7 +101,7 @@ class PgvectorBackend:
             metadata = self._read_metadata(conn, self._hnsw_artifact_key(m, ef_construction))
             if metadata is None:
                 return "Cache not built yet."
-            return f"Build time: {metadata['build_time_s']:.1f} s · Index size: {metadata['index_size_mb']:.0f} MB"
+            return self._format_index_summary(metadata)
 
     def ivf_summary(self, nlist: int) -> str:
         if not self._database_exists():
@@ -112,7 +112,7 @@ class PgvectorBackend:
             metadata = self._read_metadata(conn, self._ivf_artifact_key(nlist))
             if metadata is None:
                 return "Cache not built yet."
-            return f"Build time: {metadata['build_time_s']:.1f} s · Index size: {metadata['index_size_mb']:.0f} MB"
+            return self._format_index_summary(metadata)
 
     def run_comparison(self, config: RunConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
         self._ensure_database()
@@ -364,6 +364,11 @@ class PgvectorBackend:
             (artifact_key, build_time_s, index_size_mb),
         )
         return {"build_time_s": float(build_time_s), "index_size_mb": index_size_mb}
+
+    def _format_index_summary(self, metadata: dict[str, float]) -> str:
+        if metadata["build_time_s"] <= 0:
+            return f"Build time: existing index · Index size: {metadata['index_size_mb']:.0f} MB"
+        return f"Build time: {metadata['build_time_s']:.1f} s · Index size: {metadata['index_size_mb']:.0f} MB"
 
     def _search_table(
         self,

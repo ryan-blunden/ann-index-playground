@@ -7,21 +7,7 @@ default:
     @just --list
 
 download-data:
-    @mkdir -p data
-    @if [ -f data/sift-128-euclidean.hdf5 ]; then \
-        echo "Dataset already exists. Skipping download."; \
-        exit 0; \
-    fi
-    @echo "Downloading SIFT1M dataset..."
-    @if command -v curl >/dev/null 2>&1; then \
-        curl -L -o data/sift-128-euclidean.hdf5 https://ann-benchmarks.com/sift-128-euclidean.hdf5; \
-    elif command -v wget >/dev/null 2>&1; then \
-        wget -O data/sift-128-euclidean.hdf5 https://ann-benchmarks.com/sift-128-euclidean.hdf5; \
-    else \
-        echo "Error: neither curl nor wget is installed."; \
-        exit 1; \
-    fi
-    @echo "Download complete."
+    bash scripts/download_data.sh
 
 setup:
     uv python install {{ python_version }}
@@ -52,6 +38,9 @@ fix: format lint-fix
 
 test:
     uv run pytest
+
+reset-pgvector:
+    uv run python scripts/reset_pgvector.py
 
 clean:
     rm -rf cache
