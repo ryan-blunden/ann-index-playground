@@ -1,0 +1,64 @@
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Bytecode caches
+*.pyo
+*.pyd
+
+# -----------------------------
+# Virtual environments
+# -----------------------------
+.venv/
+venv/
+env/
+
+# -----------------------------
+# uv
+# -----------------------------
+.uv/
+
+# -----------------------------
+# Build / packaging
+# -----------------------------
+build/
+dist/
+*.egg-info/
+
+# -----------------------------
+# Data (keep folder, ignore contents)
+# -----------------------------
+data/*
+!data/.gitkeep
+.env
+cache/*
+*.index
+
+# -----------------------------
+# Logs / temp
+# -----------------------------
+*.log
+*.tmp
+
+# -----------------------------
+# Tooling caches
+# -----------------------------
+.ruff_cache/
+.pytest_cache/
+
+# -----------------------------
+# VS Code
+# -----------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# -----------------------------
+# macOS
+# -----------------------------
+.DS_Store

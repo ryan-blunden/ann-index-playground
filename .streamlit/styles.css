@@ -1,0 +1,213 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+    --bg: #111827;
+    --panel: #1f2937;
+    --panel-2: #1f2937;
+    --panel-3: #111827;
+    --border: #374151;
+    --text: #f9fafb;
+    --muted: #9ca3af;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59, 130, 246, 0.14);
+}
+
+.stApp {
+    background: var(--bg);
+    color: var(--text);
+}
+
+.block-container {
+    padding-top: 3.25rem;
+    padding-bottom: 3rem;
+    max-width: 1380px;
+}
+
+h1, h2, h3 {
+    font-family: "DM Serif Display", serif !important;
+    color: var(--text);
+    letter-spacing: -0.02em;
+}
+
+p, li, div, span, label {
+    font-family: "IBM Plex Sans", sans-serif !important;
+}
+
+.hero {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 1.45rem 1.6rem 1.2rem;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+    margin-bottom: 1.2rem;
+}
+
+.eyebrow {
+    color: var(--accent);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-weight: 700;
+    margin-bottom: 0.45rem;
+}
+
+.hero-copy {
+    color: var(--muted);
+    max-width: 66ch;
+    line-height: 1.6;
+    margin-top: 0.55rem;
+}
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 1.1rem 1.1rem 0.9rem;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.14);
+}
+
+.index-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 1.25rem;
+    min-height: 420px;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.14);
+}
+
+.index-label {
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+}
+
+.index-title {
+    font-family: "DM Serif Display", serif;
+    font-size: 2rem;
+    line-height: 1;
+    margin-bottom: 0.45rem;
+}
+
+.index-config {
+    color: var(--muted);
+    margin-bottom: 1rem;
+    min-height: 2.5rem;
+    font-size: 0.95rem;
+    line-height: 1.45;
+}
+
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.stat-box {
+    background: var(--panel-3);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 1rem 1.05rem;
+    min-height: 108px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.stat-label {
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.25rem;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.cache-meta {
+    margin-top: 0.85rem;
+    padding: 0.8rem 0.95rem;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--panel-3);
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1.45;
+}
+
+.run-history {
+    margin-top: 0.35rem;
+    display: grid;
+    gap: 1.5rem;
+}
+
+.run-block {
+    display: grid;
+    gap: 0.85rem;
+    margin-top: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.run-block-header {
+    display: flex;
+    align-items: baseline;
+    padding: 0 0.15rem;
+}
+
+.run-block-title {
+    font-family: "DM Serif Display", serif;
+    font-size: 1.55rem;
+    color: var(--text);
+    margin-bottom: 1rem;
+}
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stSelectSlider"] div[role="slider"],
+div[data-testid="stSlider"] div[role="slider"] {
+    font-family: "IBM Plex Sans", sans-serif !important;
+}
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input {
+    background: var(--panel-3) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 14px !important;
+}
+
+div[data-testid="stButton"] button {
+    background: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+    border-radius: 14px !important;
+    color: #eff6ff !important;
+    box-shadow: none !important;
+}
+
+div[data-testid="stButton"] button:hover {
+    background: #2563eb !important;
+    border-color: #2563eb !important;
+}
+
+div[data-testid="stButton"] {
+    margin: 1rem 0 0;
+}
+
+div[data-baseweb="slider"] [role="slider"] {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+}
+
+div[data-baseweb="slider"] > div > div:nth-child(2) {
+    background: var(--accent) !important;
+}
+
+div[data-baseweb="slider"] > div > div:nth-child(1) {
+    background: rgba(59, 130, 246, 0.24) !important;
+}

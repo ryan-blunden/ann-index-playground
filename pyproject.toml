@@ -1,0 +1,73 @@
+[project]
+name = "ann-demo"
+version = "0.1.0"
+description = "Flat vs HNSW vs IVF ANN demo on SIFT1M for educational purposes"
+readme = "README.md"
+requires-python = ">=3.14"
+
+dependencies = [
+    "faiss-cpu",
+    "h5py",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "psutil",
+    "streamlit",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["ann_core", "ann_app"]
+
+[dependency-groups]
+dev = [
+    "black>=24.0",
+    "pylint>=4.0.5",
+    "ruff>=0.3.0",
+    "watchdog>=6.0.0",
+]
+
+[tool.black]
+line-length = 150
+target-version = ["py314"]
+skip-string-normalization = true
+
+[tool.ruff]
+line-length = 150
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ann_core", "ann_app"]
+
+[tool.pylint.main]
+py-version = "3.14"
+jobs = 0
+ignore-paths = [".venv", "cache"]
+extension-pkg-allow-list = ["faiss"]
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-module-docstring",
+    "missing-function-docstring",
+    "missing-class-docstring",
+    "too-many-locals",
+    "too-many-statements",
+    "duplicate-code",
+]
+
+[tool.pylint.format]
+max-line-length = 150
+
+[tool.pylint.design]
+max-args = 8
+max-attributes = 10
+
+[tool.pylint.typecheck]
+generated-members = ["faiss.*"]

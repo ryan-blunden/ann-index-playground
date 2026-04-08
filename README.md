@@ -1,0 +1,247 @@
+# ANN Index Playground
+
+An interactive local app for explaining why vector indexes exist and how `Flat`, `HNSW`, and `IVF` behave differently on the SIFT1M dataset.
+
+This repo was created as a companion app for a YouTube video. The goal is not to produce a full benchmark suite or a production retrieval system. The goal is to make ANN trade-offs visible and demoable by changing a few parameters and rerunning the comparison.
+
+<img src="./screenshot.png" alt="ANN Index Playground UI" width="700" />
+
+## What the app is for
+
+The app is designed to help explain:
+
+- why exact search is simple but expensive at larger scales
+- why HNSW is often a strong default when recall matters
+- why IVF is useful when you want faster build times and a tunable search surface
+- how query-time tuning differs from build-time tuning
+- how the same index can feel very different when you change `efSearch`, `nlist`, or `nprobe`
+
+The UI is intentionally opinionated:
+
+- it keeps the benchmark scope narrow
+- it focuses on SIFT1M and Euclidean distance
+- it favors side-by-side comparisons over raw charts
+- it keeps previous runs visible so parameter changes are easy to compare
+
+## What the app does
+
+For each run, the app compares:
+
+- `Flat`
+- `HNSW`
+- `IVF`
+
+It measures:
+
+- average latency
+- p95 latency
+- recall@10
+- relative speed versus Flat
+
+Build time and index size are shown separately under the `HNSW` and `IVF` control groups, because those values depend on build-time settings and are otherwise repetitive across run history.
+
+## Dataset
+
+This app expects the ANN-Benchmarks SIFT1M HDF5 dataset at:
+
+```text
+data/sift-128-euclidean.hdf5
+```
+
+If you do not already have it, download it with:
+
+```bash
+just download-data
+```
+
+## Why SIFT1M and L2
+
+This repo uses the classic SIFT1M benchmark because it is a well-known ANN dataset and keeps the story simple.
+
+- dataset: `SIFT1M`
+- distance metric: `L2` / Euclidean distance
+- nearest-neighbor target: `k = 10`
+
+That makes the app a good teaching tool for ANN index behavior, even though it is not intended to represent modern semantic embedding workloads directly.
+
+## Setup
+
+Install `just` if needed:
+
+```bash
+brew install just
+```
+
+This repo uses `uv` for:
+
+- installing Python `3.14`
+- creating the virtual environment
+- syncing dependencies
+- running local commands
+
+The `just` commands in this repo assume `uv` is installed.
+
+Then set up the project:
+
+```bash
+just setup
+```
+
+This repo targets Python `3.14` and uses `uv` to create and manage the environment.
+
+If you prefer to skip `just`, the equivalent commands are:
+
+```bash
+uv python install 3.14
+uv venv --python 3.14 .venv
+uv sync --group dev
+```
+
+## Running the app
+
+Launch the Streamlit UI with:
+
+```bash
+just ui
+```
+
+If you prefer to run it directly without `just`:
+
+```bash
+uv run streamlit run ann_app.py
+```
+
+## Vector count configuration
+
+The number of indexed vectors is controlled through `.env` rather than hardcoded in the app:
+
+```env
+VECTOR_COUNT=1000000
+```
+
+If you change `VECTOR_COUNT`, restart the app so the new value is picked up.
+
+This setting matters a lot:
+
+- it changes index build time
+- it changes index size
+- it can meaningfully change latency and recall behavior
+
+The app currently treats vector count as an app-level setting, not a live in-UI control, because cached index files are keyed by that value.
+
+## Caching behavior
+
+The app writes serialized indexes into `cache/`.
+
+These caches are reused when the build-time configuration matches:
+
+- `Flat`: keyed by vector count
+- `HNSW`: keyed by vector count, `M`, and `efConstruction`
+- `IVF`: keyed by vector count and `nlist`
+
+That means these changes do not require a rebuild:
+
+- `Queries`
+- `Timing repeats`
+- `Single-query sample size`
+- `HNSW efSearch`
+- `IVF nprobe`
+
+These changes do require a rebuild:
+
+- `VECTOR_COUNT`
+- `HNSW M`
+- `HNSW efConstruction`
+- `IVF nlist`
+
+## Understanding the controls
+
+### Search settings
+
+- `Vectors`
+  - read-only in the UI
+  - comes from `.env`
+- `Queries`
+  - how many queries are used for the current comparison
+  - more queries means slower runs but more stable averages
+- `Timing repeats`
+  - how many times the batch search is repeated for average timing
+- `Single-query sample size`
+  - how many individual queries are timed to estimate p95 latency
+
+### HNSW
+
+- `M`
+  - graph connectivity
+  - higher values generally improve recall but increase build time and index size
+- `efConstruction`
+  - build-time search breadth
+  - higher values generally improve graph quality but make builds slower
+- `efSearch`
+  - query-time search breadth
+  - higher values generally improve recall but increase latency
+
+### IVF
+
+- `nlist`
+  - number of coarse partitions
+  - higher values can improve selectivity but make build/training more expensive
+- `nprobe`
+  - number of partitions searched at query time
+  - higher values generally improve recall but increase latency
+
+## Reading the results
+
+Each run is kept on screen so you can compare changes over time.
+
+The result cards show:
+
+- `Avg Latency`
+- `Recall`
+- `Vs Flat`
+- `p95 Latency`
+
+Recall is displayed as a percentage for readability.
+
+`Vs Flat` is the relative speedup versus exact search:
+
+- above `1.0x` means faster than Flat
+- `1.0x` means the same as Flat
+- below `1.0x` means slower than Flat
+
+## Developer commands
+
+```bash
+just ui
+just format
+just lint
+just pylint
+just check
+just fix
+```
+
+Direct `uv` equivalents:
+
+```bash
+uv run streamlit run ann_app.py
+uv run black .
+uv run ruff check .
+uv run pylint ann_core.py ann_app.py
+```
+
+## Code layout
+
+- [ann_app.py](/Users/rb/Projects/Actian/ann-indexes/ann_app.py)
+  - Streamlit UI, cache orchestration, and run history rendering
+- [ann_core.py](/Users/rb/Projects/Actian/ann-indexes/ann_core.py)
+  - dataset loading, FAISS index creation, and benchmark helpers
+- [pyproject.toml](/Users/rb/Projects/Actian/ann-indexes/pyproject.toml)
+  - project configuration, linting, and Python/tooling settings
+- [justfile](/Users/rb/Projects/Actian/ann-indexes/justfile)
+  - convenience commands for setup and local development
+
+## Notes
+
+- This app uses `faiss-cpu`, not a CUDA FAISS build.
+- Absolute timings are hardware-dependent.
+- Relative behavior can still be useful for explanation, but should not be overclaimed as universally applicable.
