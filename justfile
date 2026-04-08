@@ -35,7 +35,7 @@ lint:
     uv run ruff check .
 
 pylint:
-    uv run pylint ann_core.py ann_app.py
+    uv run pylint ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_backend_contract.py tests/test_pgvector_backend.py
 
 lint-fix:
     uv run ruff check . --fix
