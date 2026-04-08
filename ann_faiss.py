@@ -5,7 +5,7 @@ import os
 import time
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import faiss
 import h5py
@@ -34,7 +34,7 @@ def current_rss_mb() -> float | None:
         return None
     try:
         return psutil_module.Process(os.getpid()).memory_info().rss / (1024 * 1024)
-    except (OSError, AttributeError):
+    except OSError, AttributeError:
         return None
 
 
@@ -70,7 +70,7 @@ def overlap_recall_at_k(pred_ids: np.ndarray, reference_ids: np.ndarray, k: int)
 
 def warmup_index(index: faiss.Index, queries: np.ndarray, k: int) -> None:
     warmup_count = min(100, len(queries))
-    index.search(queries[:warmup_count], k)
+    index.search(queries[:warmup_count], k)  # pyright: ignore[reportCallIssue]
 
 
 def measure_batch_latency(index: faiss.Index, queries: np.ndarray, k: int, repeats: int) -> tuple[list[float], np.ndarray]:
@@ -79,7 +79,7 @@ def measure_batch_latency(index: faiss.Index, queries: np.ndarray, k: int, repea
 
     for _ in range(repeats):
         start = time.perf_counter()
-        _, ids = index.search(queries, k)
+        _, ids = index.search(queries, k)  # pyright: ignore[reportCallIssue]
         batch_run_seconds.append(time.perf_counter() - start)
         last_ids = ids
 
@@ -93,7 +93,7 @@ def measure_single_query_latencies(index: faiss.Index, queries: np.ndarray, k: i
     for query in sampled_queries:
         single_query = np.ascontiguousarray(query.reshape(1, -1))
         start = time.perf_counter()
-        index.search(single_query, k)
+        index.search(single_query, k)  # pyright: ignore[reportCallIssue]
         latencies_ms.append((time.perf_counter() - start) * 1000)
     return latencies_ms
 
@@ -127,7 +127,7 @@ def build_flat(xb: np.ndarray, dimension: int) -> tuple[faiss.IndexFlatL2, float
     rss_before = current_rss_mb()
     start = time.perf_counter()
     index = faiss.IndexFlatL2(dimension)
-    index.add(xb)  # pylint: disable=no-value-for-parameter
+    index.add(xb)  # pylint: disable=no-value-for-parameter  # pyright: ignore[reportCallIssue]
     build_time_s = time.perf_counter() - start
     rss_after = current_rss_mb()
     memory_delta_mb = None if rss_before is None or rss_after is None else rss_after - rss_before
@@ -138,12 +138,13 @@ def build_hnsw(xb: np.ndarray, dimension: int, m: int, ef_construction: int) -> 
     rss_before = current_rss_mb()
     start = time.perf_counter()
     index = faiss.IndexHNSWFlat(dimension, m)
-    index.hnsw.efConstruction = ef_construction
-    index.add(xb)  # pylint: disable=no-value-for-parameter
+    hnsw_index = cast(faiss.IndexHNSWFlat, index)
+    hnsw_index.hnsw.efConstruction = ef_construction  # pyright: ignore[reportAttributeAccessIssue]
+    hnsw_index.add(xb)  # pylint: disable=no-value-for-parameter  # pyright: ignore[reportCallIssue]
     build_time_s = time.perf_counter() - start
     rss_after = current_rss_mb()
     memory_delta_mb = None if rss_before is None or rss_after is None else rss_after - rss_before
-    return index, build_time_s, memory_delta_mb
+    return hnsw_index, build_time_s, memory_delta_mb
 
 
 def build_ivf(xb: np.ndarray, dimension: int, nlist: int) -> tuple[faiss.IndexIVFFlat, float, float | None]:
@@ -151,8 +152,8 @@ def build_ivf(xb: np.ndarray, dimension: int, nlist: int) -> tuple[faiss.IndexIV
     start = time.perf_counter()
     quantizer = faiss.IndexFlatL2(dimension)
     index = faiss.IndexIVFFlat(quantizer, dimension, nlist, faiss.METRIC_L2)
-    index.train(xb)  # pylint: disable=no-value-for-parameter
-    index.add(xb)  # pylint: disable=no-value-for-parameter
+    index.train(xb)  # pylint: disable=no-value-for-parameter  # pyright: ignore[reportCallIssue]
+    index.add(xb)  # pylint: disable=no-value-for-parameter  # pyright: ignore[reportCallIssue]
     build_time_s = time.perf_counter() - start
     rss_after = current_rss_mb()
     memory_delta_mb = None if rss_before is None or rss_after is None else rss_after - rss_before
@@ -254,7 +255,7 @@ class FaissBackend:
             assert config.hnsw_ef_construction is not None
             assert config.hnsw_ef_search is not None
             hnsw_index, hnsw_build_s, hnsw_size_mb, _ = self._load_or_build_hnsw(xb, dimension, config.hnsw_m, config.hnsw_ef_construction)
-            hnsw_index.hnsw.efSearch = config.hnsw_ef_search
+            hnsw_index.hnsw.efSearch = config.hnsw_ef_search  # pyright: ignore[reportAttributeAccessIssue]
             hnsw_search = evaluate_index(
                 hnsw_index,
                 xq,
@@ -283,7 +284,7 @@ class FaissBackend:
             assert config.ivf_nlist is not None
             assert config.ivf_nprobe is not None
             ivf_index, ivf_build_s, ivf_size_mb, _ = self._load_or_build_ivf(xb, dimension, config.ivf_nlist)
-            ivf_index.nprobe = config.ivf_nprobe
+            ivf_index.nprobe = config.ivf_nprobe  # pyright: ignore[reportAttributeAccessIssue]
             ivf_search = evaluate_index(
                 ivf_index,
                 xq,

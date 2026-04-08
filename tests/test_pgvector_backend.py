@@ -2,10 +2,12 @@ from __future__ import annotations
 
 # pylint: disable=redefined-outer-name
 import uuid
+from collections.abc import Generator
 from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from ann_backend import BackendSettings, RunConfig
 from ann_pgvector import PgvectorBackend
@@ -15,7 +17,7 @@ from tests.test_backend_contract import (
 
 
 @pytest.fixture
-def pgvector_backend(tmp_path: Path) -> PgvectorBackend:
+def pgvector_backend(tmp_path: Path) -> Generator[PgvectorBackend]:
     dataset_path = tmp_path / "tiny-sift.hdf5"
     write_synthetic_dataset(dataset_path)
 
@@ -24,7 +26,7 @@ def pgvector_backend(tmp_path: Path) -> PgvectorBackend:
     database_url = f"postgresql:///{database_name}"
 
     with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute(f'CREATE DATABASE "{database_name}"')
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
 
     settings = BackendSettings(
         dataset_path=dataset_path,
@@ -44,7 +46,7 @@ def pgvector_backend(tmp_path: Path) -> PgvectorBackend:
 
     with psycopg.connect(admin_url, autocommit=True) as conn:
         conn.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s", (database_name,))
-        conn.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
+        conn.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database_name)))
 
 
 def test_pgvector_initial_artifacts_are_built_with_progress(pgvector_backend: PgvectorBackend) -> None:

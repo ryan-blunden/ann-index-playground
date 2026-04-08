@@ -37,13 +37,16 @@ lint:
 pylint:
     uv run pylint ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_backend_contract.py tests/test_pgvector_backend.py
 
+pyright:
+    uv run pyright
+
 lint-fix:
     uv run ruff check . --fix
 
 format:
     uv run black .
 
-check: format lint pylint
+check: format lint pylint pyright
 
 fix: format lint-fix
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from functools import cached_property
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,8 @@ class PgvectorBackend:
             raise ValueError("database_url is required for the pgvector backend.")
         if not self.settings.admin_database_url:
             raise ValueError("admin_database_url is required for the pgvector backend.")
+        self.database_url = self.settings.database_url
+        self.admin_database_url = self.settings.admin_database_url
 
     @cached_property
     def dataset(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -213,19 +215,19 @@ class PgvectorBackend:
 
     def _database_exists(self) -> bool:
         database_name = self._database_name()
-        with psycopg.connect(self.settings.admin_database_url, autocommit=True) as conn:
+        with psycopg.connect(self.admin_database_url, autocommit=True) as conn:
             result = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database_name,)).fetchone()
             return result is not None
 
     def _ensure_database(self) -> None:
         database_name = self._database_name()
-        with psycopg.connect(self.settings.admin_database_url, autocommit=True) as conn:
+        with psycopg.connect(self.admin_database_url, autocommit=True) as conn:
             exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database_name,)).fetchone()
             if exists is None:
                 conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
 
     def _target_connection(self) -> psycopg.Connection[Any]:
-        conn = psycopg.connect(self.settings.database_url, autocommit=True)
+        conn = psycopg.connect(self.database_url, autocommit=True)
         return conn
 
     def _ensure_extension_and_metadata(self, conn: psycopg.Connection[Any]) -> None:
@@ -245,11 +247,13 @@ class PgvectorBackend:
         conn.execute(
             sql.SQL("CREATE UNLOGGED TABLE IF NOT EXISTS {} (id integer PRIMARY KEY, embedding vector({}))").format(
                 sql.Identifier(table_name),
-                sql.SQL(str(self.dimension)),
+                sql.SQL(cast(Any, str(self.dimension))),
             )
         )
 
-        row_count = conn.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table_name))).fetchone()[0]
+        row = conn.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table_name))).fetchone()
+        assert row is not None
+        row_count = int(row[0])
         if row_count == self.settings.vector_count:
             return
 
@@ -257,7 +261,7 @@ class PgvectorBackend:
         xb = np.ascontiguousarray(self.dataset[0][: self.settings.vector_count], dtype=np.float32)
 
         with conn.cursor() as cur:
-            copy_sql = sql.SQL("COPY {} (id, embedding) FROM STDIN").format(sql.Identifier(table_name)).as_string(conn)
+            copy_sql = sql.SQL("COPY {} (id, embedding) FROM STDIN").format(sql.Identifier(table_name))
             with cur.copy(copy_sql) as copy:
                 for row_id, vector in enumerate(xb):
                     copy.write_row((row_id, Vector(vector.tolist())))
@@ -268,17 +272,19 @@ class PgvectorBackend:
         self._ensure_family_table(conn, self._hnsw_table_name())
         artifact_key = self._hnsw_artifact_key(m, ef_construction)
         existing_metadata = self._read_metadata(conn, artifact_key)
-        if existing_metadata is not None and self._index_exists(conn, self._hnsw_index_name(m, ef_construction)):
-            return existing_metadata
-
         index_name = self._hnsw_index_name(m, ef_construction)
+        if self._index_exists(conn, index_name):
+            if existing_metadata is not None:
+                return existing_metadata
+            return self._write_metadata(conn, artifact_key, index_name, 0.0)
+
         start = time.perf_counter()
         conn.execute(
             sql.SQL("CREATE INDEX {} ON {} USING hnsw (embedding vector_l2_ops) WITH (m = {}, ef_construction = {})").format(
                 sql.Identifier(index_name),
                 sql.Identifier(self._hnsw_table_name()),
-                sql.SQL(str(m)),
-                sql.SQL(str(ef_construction)),
+                sql.SQL(cast(Any, str(m))),
+                sql.SQL(cast(Any, str(ef_construction))),
             )
         )
         build_time_s = time.perf_counter() - start
@@ -290,16 +296,18 @@ class PgvectorBackend:
         self._ensure_family_table(conn, self._ivf_table_name())
         artifact_key = self._ivf_artifact_key(nlist)
         existing_metadata = self._read_metadata(conn, artifact_key)
-        if existing_metadata is not None and self._index_exists(conn, self._ivf_index_name(nlist)):
-            return existing_metadata
-
         index_name = self._ivf_index_name(nlist)
+        if self._index_exists(conn, index_name):
+            if existing_metadata is not None:
+                return existing_metadata
+            return self._write_metadata(conn, artifact_key, index_name, 0.0)
+
         start = time.perf_counter()
         conn.execute(
             sql.SQL("CREATE INDEX {} ON {} USING ivfflat (embedding vector_l2_ops) WITH (lists = {})").format(
                 sql.Identifier(index_name),
                 sql.Identifier(self._ivf_table_name()),
-                sql.SQL(str(nlist)),
+                sql.SQL(cast(Any, str(nlist))),
             )
         )
         build_time_s = time.perf_counter() - start
@@ -309,7 +317,9 @@ class PgvectorBackend:
 
     def _ensure_family_table(self, conn: psycopg.Connection[Any], table_name: str) -> None:
         if self._table_exists(conn, table_name):
-            row_count = conn.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table_name))).fetchone()[0]
+            row = conn.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table_name))).fetchone()
+            assert row is not None
+            row_count = int(row[0])
             if row_count == self.settings.vector_count:
                 return
             conn.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(table_name)))
@@ -340,7 +350,9 @@ class PgvectorBackend:
         return {"build_time_s": float(row[0]), "index_size_mb": float(row[1])}
 
     def _write_metadata(self, conn: psycopg.Connection[Any], artifact_key: str, index_name: str, build_time_s: float) -> dict[str, float]:
-        index_size_mb = float(conn.execute("SELECT pg_relation_size(%s::regclass) / (1024.0 * 1024.0)", (index_name,)).fetchone()[0])
+        row = conn.execute("SELECT pg_relation_size(%s::regclass) / (1024.0 * 1024.0)", (index_name,)).fetchone()
+        assert row is not None
+        index_size_mb = float(row[0])
         conn.execute(
             """
             INSERT INTO ann_index_metadata (artifact_key, build_time_s, index_size_mb)
@@ -368,7 +380,7 @@ class PgvectorBackend:
 
         with conn.cursor() as cur:
             for key, value in (session_settings or {}).items():
-                cur.execute(sql.SQL("SET {} = {}").format(sql.SQL(key), sql.SQL(str(value))))
+                cur.execute(sql.SQL("SET {} = {}").format(sql.SQL(cast(Any, key)), sql.SQL(cast(Any, str(value)))))
 
             self._warmup_queries(cur, query_sql, queries, k)
 
@@ -393,7 +405,7 @@ class PgvectorBackend:
                 last_ids = np.asarray(ids_for_repeat, dtype=np.int64)
 
             for key in session_settings or {}:
-                cur.execute(sql.SQL("RESET {}").format(sql.SQL(key)))
+                cur.execute(sql.SQL("RESET {}").format(sql.SQL(cast(Any, key))))
 
         assert last_ids is not None
         return {
@@ -403,13 +415,13 @@ class PgvectorBackend:
             "p95_latency_ms": percentile(sample_latencies_ms, 95),
         }
 
-    def _warmup_queries(self, cur: psycopg.Cursor[Any], query_sql: sql.SQL, queries: np.ndarray, k: int) -> None:
+    def _warmup_queries(self, cur: psycopg.Cursor[Any], query_sql: Any, queries: np.ndarray, k: int) -> None:
         for query in queries[: min(10, len(queries))]:
             cur.execute(query_sql, (Vector(query.tolist()), k))
             cur.fetchall()
 
     def _database_name(self) -> str:
-        return self.settings.database_url.rsplit("/", maxsplit=1)[-1]
+        return self.database_url.rsplit("/", maxsplit=1)[-1]
 
     def _flat_table_name(self) -> str:
         return f"{self.dataset_prefix}_flat"

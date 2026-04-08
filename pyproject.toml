@@ -28,6 +28,7 @@ py-modules = ["ann_app", "ann_backend", "ann_faiss", "ann_pgvector"]
 dev = [
     "black>=24.0",
     "pylint>=4.0.5",
+    "pyright>=1.1.408",
     "pytest>=9.0.3",
     "ruff>=0.3.0",
     "watchdog>=6.0.0",
