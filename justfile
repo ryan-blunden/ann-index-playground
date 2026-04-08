@@ -47,6 +47,9 @@ check: format lint pylint
 
 fix: format lint-fix
 
+test:
+    uv run pytest
+
 clean:
     rm -rf cache
     rm -rf __pycache__
