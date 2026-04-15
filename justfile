@@ -17,11 +17,17 @@ setup:
 ui:
     uv run streamlit run ann_app.py
 
+actian-up:
+    docker compose -f docker-compose.actian-vectorai.yml up -d
+
+actian-down:
+    docker compose -f docker-compose.actian-vectorai.yml down
+
 lint:
     uv run ruff check .
 
 pylint:
-    uv run pylint ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_backend_contract.py tests/test_pgvector_backend.py
+    uv run pylint ann_actian.py ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_actian_backend.py tests/test_backend_contract.py tests/test_pgvector_backend.py
 
 pyright:
     uv run pyright

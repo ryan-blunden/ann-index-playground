@@ -11,6 +11,7 @@ import psycopg
 from pgvector import Vector
 from pgvector.psycopg import register_vector
 from psycopg import sql
+from psycopg.errors import DuplicateTable, ProgramLimitExceeded, UniqueViolation
 
 from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig
 from ann_faiss import load_sift_hdf5, overlap_recall_at_k, percentile
@@ -103,7 +104,7 @@ class PgvectorBackend:
                 return "Cache not built yet."
             return self._format_index_summary(metadata)
 
-    def ivf_summary(self, nlist: int) -> str:
+    def ivf_summary(self, nlist: int, nprobe: int | None = None) -> str:
         if not self._database_exists():
             return "Cache not built yet."
 
@@ -113,6 +114,9 @@ class PgvectorBackend:
             if metadata is None:
                 return "Cache not built yet."
             return self._format_index_summary(metadata)
+
+    def flat_summary(self) -> str:
+        return ""
 
     def run_comparison(self, config: RunConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
         self._ensure_database()
@@ -269,49 +273,90 @@ class PgvectorBackend:
         conn.execute(sql.SQL("ANALYZE {}").format(sql.Identifier(table_name)))
 
     def _ensure_hnsw_index(self, conn: psycopg.Connection[Any], m: int, ef_construction: int) -> dict[str, float]:
-        self._ensure_family_table(conn, self._hnsw_table_name())
+        table_name = self._hnsw_table_name()
+        self._ensure_family_table(conn, table_name)
         artifact_key = self._hnsw_artifact_key(m, ef_construction)
         existing_metadata = self._read_metadata(conn, artifact_key)
         index_name = self._hnsw_index_name(m, ef_construction)
+        self._drop_stale_index_name(conn, index_name, table_name)
         if self._index_exists(conn, index_name):
             if existing_metadata is not None:
                 return existing_metadata
             return self._write_metadata(conn, artifact_key, index_name, 0.0)
 
         start = time.perf_counter()
-        conn.execute(
-            sql.SQL("CREATE INDEX {} ON {} USING hnsw (embedding vector_l2_ops) WITH (m = {}, ef_construction = {})").format(
-                sql.Identifier(index_name),
-                sql.Identifier(self._hnsw_table_name()),
-                sql.SQL(cast(Any, str(m))),
-                sql.SQL(cast(Any, str(ef_construction))),
+        try:
+            self._set_index_build_memory(conn)
+            conn.execute(
+                sql.SQL("CREATE INDEX {} ON {} USING hnsw (embedding vector_l2_ops) WITH (m = {}, ef_construction = {})").format(
+                    sql.Identifier(index_name),
+                    sql.Identifier(table_name),
+                    sql.SQL(cast(Any, str(m))),
+                    sql.SQL(cast(Any, str(ef_construction))),
+                )
             )
-        )
+        except DuplicateTable, UniqueViolation:
+            self._drop_stale_index_name(conn, index_name, table_name)
+            if not self._index_exists(conn, index_name):
+                self._set_index_build_memory(conn)
+                conn.execute(
+                    sql.SQL("CREATE INDEX {} ON {} USING hnsw (embedding vector_l2_ops) WITH (m = {}, ef_construction = {})").format(
+                        sql.Identifier(index_name),
+                        sql.Identifier(table_name),
+                        sql.SQL(cast(Any, str(m))),
+                        sql.SQL(cast(Any, str(ef_construction))),
+                    )
+                )
+        except ProgramLimitExceeded as exc:
+            raise RuntimeError(
+                f"pgvector HNSW build exceeded maintenance_work_mem. Increase PGVECTOR_MAINTENANCE_WORK_MEM in .env "
+                f"(current: {self.settings.pgvector_maintenance_work_mem or 'server default'})."
+            ) from exc
         build_time_s = time.perf_counter() - start
-        conn.execute(sql.SQL("ANALYZE {}").format(sql.Identifier(self._hnsw_table_name())))
+        conn.execute(sql.SQL("ANALYZE {}").format(sql.Identifier(table_name)))
         metadata = self._write_metadata(conn, artifact_key, index_name, build_time_s)
         return metadata
 
     def _ensure_ivf_index(self, conn: psycopg.Connection[Any], nlist: int) -> dict[str, float]:
-        self._ensure_family_table(conn, self._ivf_table_name())
+        table_name = self._ivf_table_name()
+        self._ensure_family_table(conn, table_name)
         artifact_key = self._ivf_artifact_key(nlist)
         existing_metadata = self._read_metadata(conn, artifact_key)
         index_name = self._ivf_index_name(nlist)
+        self._drop_stale_index_name(conn, index_name, table_name)
         if self._index_exists(conn, index_name):
             if existing_metadata is not None:
                 return existing_metadata
             return self._write_metadata(conn, artifact_key, index_name, 0.0)
 
         start = time.perf_counter()
-        conn.execute(
-            sql.SQL("CREATE INDEX {} ON {} USING ivfflat (embedding vector_l2_ops) WITH (lists = {})").format(
-                sql.Identifier(index_name),
-                sql.Identifier(self._ivf_table_name()),
-                sql.SQL(cast(Any, str(nlist))),
+        try:
+            self._set_index_build_memory(conn)
+            conn.execute(
+                sql.SQL("CREATE INDEX {} ON {} USING ivfflat (embedding vector_l2_ops) WITH (lists = {})").format(
+                    sql.Identifier(index_name),
+                    sql.Identifier(table_name),
+                    sql.SQL(cast(Any, str(nlist))),
+                )
             )
-        )
+        except DuplicateTable, UniqueViolation:
+            self._drop_stale_index_name(conn, index_name, table_name)
+            if not self._index_exists(conn, index_name):
+                self._set_index_build_memory(conn)
+                conn.execute(
+                    sql.SQL("CREATE INDEX {} ON {} USING ivfflat (embedding vector_l2_ops) WITH (lists = {})").format(
+                        sql.Identifier(index_name),
+                        sql.Identifier(table_name),
+                        sql.SQL(cast(Any, str(nlist))),
+                    )
+                )
+        except ProgramLimitExceeded as exc:
+            raise RuntimeError(
+                f"pgvector IVF build exceeded maintenance_work_mem. Increase PGVECTOR_MAINTENANCE_WORK_MEM in .env "
+                f"(current: {self.settings.pgvector_maintenance_work_mem or 'server default'})."
+            ) from exc
         build_time_s = time.perf_counter() - start
-        conn.execute(sql.SQL("ANALYZE {}").format(sql.Identifier(self._ivf_table_name())))
+        conn.execute(sql.SQL("ANALYZE {}").format(sql.Identifier(table_name)))
         metadata = self._write_metadata(conn, artifact_key, index_name, build_time_s)
         return metadata
 
@@ -340,6 +385,28 @@ class PgvectorBackend:
         result = conn.execute("SELECT to_regclass(%s)", (index_name,)).fetchone()
         return result is not None and result[0] is not None
 
+    def _index_belongs_to_table(self, conn: psycopg.Connection[Any], index_name: str, table_name: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT tab.relname
+            FROM pg_class idx
+            JOIN pg_index ind ON ind.indexrelid = idx.oid
+            JOIN pg_class tab ON tab.oid = ind.indrelid
+            WHERE idx.relname = %s
+            """,
+            (index_name,),
+        ).fetchone()
+        return row is not None and str(row[0]) == table_name
+
+    def _drop_stale_index_name(self, conn: psycopg.Connection[Any], index_name: str, table_name: str) -> None:
+        if self._index_exists(conn, index_name) and not self._index_belongs_to_table(conn, index_name, table_name):
+            conn.execute(sql.SQL("DROP INDEX IF EXISTS {}").format(sql.Identifier(index_name)))
+
+    def _set_index_build_memory(self, conn: psycopg.Connection[Any]) -> None:
+        if not self.settings.pgvector_maintenance_work_mem:
+            return
+        conn.execute(sql.SQL("SET maintenance_work_mem = {}").format(sql.Literal(self.settings.pgvector_maintenance_work_mem)))
+
     def _read_metadata(self, conn: psycopg.Connection[Any], artifact_key: str) -> dict[str, float] | None:
         row = conn.execute(
             "SELECT build_time_s, index_size_mb FROM ann_index_metadata WHERE artifact_key = %s",
@@ -367,8 +434,8 @@ class PgvectorBackend:
 
     def _format_index_summary(self, metadata: dict[str, float]) -> str:
         if metadata["build_time_s"] <= 0:
-            return f"Build time: existing index · Index size: {metadata['index_size_mb']:.0f} MB"
-        return f"Build time: {metadata['build_time_s']:.1f} s · Index size: {metadata['index_size_mb']:.0f} MB"
+            return "Prep time: existing index"
+        return f"Prep time: {metadata['build_time_s']:.1f} s"
 
     def _search_table(
         self,

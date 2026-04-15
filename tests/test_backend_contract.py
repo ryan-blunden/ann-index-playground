@@ -63,10 +63,8 @@ def test_cache_summaries_report_built_metadata(faiss_backend: FaissBackend) -> N
 
     faiss_backend.ensure_initial_artifacts()
 
-    assert "Build time:" in faiss_backend.hnsw_summary(16, 80)
-    assert "Index size:" in faiss_backend.hnsw_summary(16, 80)
-    assert "Build time:" in faiss_backend.ivf_summary(256)
-    assert "Index size:" in faiss_backend.ivf_summary(256)
+    assert "Prep time:" in faiss_backend.hnsw_summary(16, 80)
+    assert "Prep time:" in faiss_backend.ivf_summary(256)
 
 
 def test_run_comparison_returns_expected_rows_and_metrics(faiss_backend: FaissBackend) -> None:

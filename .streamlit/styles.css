@@ -146,9 +146,11 @@ p, li, div, span, label {
 }
 
 .stat-value {
-    font-size: 1.5rem;
+    font-size: 1.35rem;
     font-weight: 700;
+    line-height: 1.15;
     color: var(--text);
+    white-space: nowrap;
 }
 
 .cache-meta {

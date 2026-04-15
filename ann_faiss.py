@@ -87,6 +87,24 @@ def measure_batch_latency(index: faiss.Index, queries: np.ndarray, k: int, repea
     return batch_run_seconds, last_ids
 
 
+def measure_query_latencies(index: faiss.Index, queries: np.ndarray, k: int, repeats: int) -> tuple[list[float], np.ndarray]:
+    latencies_ms: list[float] = []
+    last_ids: np.ndarray | None = None
+
+    for _ in range(repeats):
+        ids_for_repeat: list[list[int]] = []
+        for query in queries:
+            single_query = np.ascontiguousarray(query.reshape(1, -1))
+            start = time.perf_counter()
+            _, ids = index.search(single_query, k)  # pyright: ignore[reportCallIssue]
+            latencies_ms.append((time.perf_counter() - start) * 1000)
+            ids_for_repeat.append(ids[0].tolist())
+        last_ids = np.asarray(ids_for_repeat, dtype=np.int64)
+
+    assert last_ids is not None
+    return latencies_ms, last_ids
+
+
 def measure_single_query_latencies(index: faiss.Index, queries: np.ndarray, k: int, sample_size: int) -> list[float]:
     sampled_queries = queries[: min(sample_size, len(queries))]
     latencies_ms: list[float] = []
@@ -108,16 +126,16 @@ def evaluate_index(
     latency_sample_size: int,
 ) -> dict[str, Any]:
     warmup_index(index, queries, k)
-    batch_run_seconds, last_ids = measure_batch_latency(index, queries, k, repeats)
+    avg_query_latencies_ms, last_ids = measure_query_latencies(index, queries, k, repeats)
     single_query_latencies_ms = measure_single_query_latencies(index, queries, k, latency_sample_size)
-    avg_latency_ms = float(np.mean([(seconds / len(queries)) * 1000 for seconds in batch_run_seconds]))
+    avg_latency_ms = float(np.mean(avg_query_latencies_ms))
 
     return {
         "ids": last_ids,
         "avg_latency_ms": avg_latency_ms,
         "p50_latency_ms": percentile(single_query_latencies_ms, 50),
         "p95_latency_ms": percentile(single_query_latencies_ms, 95),
-        "qps_avg": len(queries) / float(np.mean(batch_run_seconds)),
+        "qps_avg": 1000.0 / avg_latency_ms,
         "recall_at_10": overlap_recall_at_k(last_ids, reference_ids, k),
         "latency_sample_size": len(single_query_latencies_ms),
     }
@@ -214,8 +232,11 @@ class FaissBackend:
     def hnsw_summary(self, m: int, ef_construction: int) -> str:
         return self._format_cache_summary(self._hnsw_path(m, ef_construction))
 
-    def ivf_summary(self, nlist: int) -> str:
+    def ivf_summary(self, nlist: int, nprobe: int | None = None) -> str:
         return self._format_cache_summary(self._ivf_path(nlist))
+
+    def flat_summary(self) -> str:
+        return self._format_flat_summary(self._flat_path())
 
     def run_comparison(self, config: RunConfig) -> tuple[pd.DataFrame, dict[str, Any]]:
         xb_full, xq_full, _ = self.dataset
@@ -369,7 +390,17 @@ class FaissBackend:
             return "Cache not built yet."
 
         metadata = self._read_cache_metadata(index_path)
-        return f"Build time: {metadata['build_time_s']:.1f} s · Index size: {metadata['index_size_mb']:.0f} MB"
+        size_text = f"Stored index: {metadata['index_size_mb']:.1f} MB"
+        if metadata["build_time_s"] <= 0:
+            return f"Prep time: cached · {size_text}"
+        return f"Prep time: {metadata['build_time_s']:.1f} s · {size_text}"
+
+    def _format_flat_summary(self, index_path: Path) -> str:
+        if not index_path.exists():
+            return "Flat index not built yet."
+
+        metadata = self._read_cache_metadata(index_path)
+        return f"Flat stored index: {metadata['index_size_mb']:.1f} MB"
 
     def _load_or_build_flat(self, xb: np.ndarray, dimension: int) -> tuple[faiss.Index, float, float, bool]:
         path = self._flat_path()

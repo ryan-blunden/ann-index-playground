@@ -6,6 +6,32 @@ This repo was created as a companion app for a YouTube video. The goal is not to
 
 <img src="./screenshot.png" alt="ANN Index Playground UI" width="700" />
 
+## About
+
+This repository is a teaching and demo app for approximate nearest neighbor search, not a claim about what your production retrieval stack will do on real traffic.
+
+The point of the app is to make the trade-offs visible:
+
+- exact search gives you full recall, but the work scales with the dataset
+- approximate indexes do less work, so they can be faster
+- doing more work at query time usually increases recall
+- doing less work at query time usually lowers latency
+
+Those trade-offs are very real and they carry over to real systems. What does **not** carry over directly are the exact numbers.
+
+This demo uses the ANN-Benchmarks `SIFT1M` dataset, which contains 128-dimensional SIFT image descriptors and precomputed nearest-neighbor ground truth. That makes it a useful benchmark dataset, but it is not a realistic modern text-embedding workload. Many semantic search and RAG systems use much higher-dimensional embeddings with very different data distributions.
+
+So the safest way to read this repo is:
+
+- the exact latency and recall numbers here are demo numbers
+- the shape of the trade-off is the important part
+- the behavior of `Flat`, `HNSW`, and `IVF` is what this app is meant to explain
+- cross-backend numbers should be read as indicative rather than rigorous benchmarks
+
+If you are trying to map this onto systems such as `pgvector`, Redis, or other vector databases, the intuition carries over better than the absolute timings. In a full database system, a query is not just hitting an ANN index. It may also go through planning, execution, filtering, and other database overhead. That changes the exact numbers, and it can shift where one index starts looking better than another. What remains useful is the behavior: more search work tends to buy more recall, and less search work tends to buy lower latency.
+
+Contributions and improvements are welcome, especially if they make the demo clearer, more accurate, or easier to use without turning it into a full benchmark suite.
+
 ## What the app is for
 
 The app is designed to help explain:
@@ -15,7 +41,7 @@ The app is designed to help explain:
 - why IVF is useful when you want faster build times and a tunable search surface
 - how query-time tuning differs from build-time tuning
 - how the same index can feel very different when you change `efSearch`, `nlist`, or `nprobe`
-- how ANN trade-offs differ between `faiss` and `pgvector`
+- how ANN trade-offs show up across `faiss`, `pgvector`, and `actian`
 
 The UI is intentionally opinionated:
 
@@ -32,19 +58,23 @@ For each run, the app compares:
 - `HNSW`
 - `IVF`
 
-The app can run against two backends:
+The app can run against three backends:
 
 - `faiss`
 - `pgvector`
+- `actian`
 
 It measures:
 
-- average latency
+- average single-query latency
 - p95 latency
 - recall@10
 - relative speed versus Flat
 
-Build time and index size are shown separately under the `HNSW` and `IVF` control groups, because those values depend on build-time settings and are otherwise repetitive across run history.
+Preparation metadata is shown separately under the controls:
+
+- `faiss` shows stored index size for `Flat`, `HNSW`, and `IVF`
+- all backends show backend-specific `Prep time` for `HNSW` and `IVF`
 
 ## Dataset
 
@@ -62,13 +92,13 @@ just download-data
 
 ## Why SIFT1M and L2
 
-This repo uses the classic SIFT1M benchmark because it is a well-known ANN dataset and keeps the story simple.
+This repo uses the classic SIFT1M benchmark because it is well-known and keeps the story simple.
 
 - dataset: `SIFT1M`
 - distance metric: `L2` / Euclidean distance
 - nearest-neighbor target: `k = 10`
 
-That makes the app a good teaching tool for ANN index behavior, even though it is not intended to represent modern semantic embedding workloads directly.
+The app measures `recall@10` by comparing each approximate result set against the exact `Flat` top-10 neighbors for the same queries. It also measures latency as warmed single-query latency across all backends so the numbers are at least directionally comparable, even though they are still not benchmark-grade production measurements.
 
 ## Setup
 
@@ -92,8 +122,6 @@ Then set up the project:
 ```bash
 just setup
 ```
-
-This repo targets Python `3.14` and uses `uv` to create and manage the environment.
 
 If you prefer to skip `just`, the equivalent commands are:
 
@@ -129,6 +157,7 @@ Supported values:
 
 - `faiss`
 - `pgvector`
+- `actian`
 
 `faiss` is the default.
 
@@ -137,9 +166,71 @@ For `pgvector`, the app also reads:
 ```env
 PGVECTOR_DATABASE_URL=postgresql:///ann_indexes_pgvector
 PGVECTOR_ADMIN_DATABASE_URL=postgresql:///postgres
+PGVECTOR_MAINTENANCE_WORK_MEM=512MB
 ```
 
 The admin database URL is used only to create the target database if it does not already exist.
+`PGVECTOR_MAINTENANCE_WORK_MEM` is applied at the session level during HNSW/IVF index builds so larger local datasets do not fail on PostgreSQL's default 64 MB maintenance memory limit.
+
+For `actian`, the app reads:
+
+```env
+ACTIAN_VECTORAI_URL=localhost:50051
+```
+
+That URL points at the running Actian VectorAI DB gRPC server.
+
+## Using the Actian backend
+
+The Actian integration uses the official Python SDK as a client and a separately running VectorAI DB server.
+
+There is not a Python-only embedded database mode in the upstream package. In live validation, the Python dependency alone only provides the client and returns a connection error until the server is running.
+
+The simplest setup in this repo is Docker:
+
+```bash
+just actian-up
+```
+
+Or without `just`:
+
+```bash
+docker compose -f docker-compose.actian-vectorai.yml up -d
+```
+
+Then set `.env`:
+
+```env
+ANN_BACKEND=actian
+ACTIAN_VECTORAI_URL=localhost:50051
+VECTOR_COUNT=1000000
+INCLUDE_HNSW=true
+INCLUDE_IVF=true
+```
+
+And launch the app:
+
+```bash
+just setup
+just ui
+```
+
+To stop the container:
+
+```bash
+just actian-down
+```
+
+Notes:
+
+- the SDK is installed from the upstream wheel URL defined in [pyproject.toml](/Users/rb/Projects/Actian/ann-indexes/pyproject.toml)
+- the current upstream Docker image worked correctly for `Flat`, `HNSW`, and `IVF` in live testing
+- each Actian index family is built in its own collection: one `Flat` collection, one `HNSW` collection, and one `IVF` collection
+- for the validated upstream image, IVF collections only became searchable after `rebuild_index()` followed by `open_collection()`, so the backend performs that explicitly after loading IVF data
+- on the validated `Actian VectorAI DB 1.0.0 / VDE 1.0.0` image, query-time `ivf_nprobe` overrides appeared to be ignored by the server, so the app materializes separate Actian IVF collections for each `nlist` / `nprobe` pair instead
+- the side-panel `Prep time` values are backend-specific preparation costs, not strict apples-to-apples build benchmarks
+- Docker overhead should be small relative to the ANN work because the client already talks to a separate gRPC server; the main thing to avoid is bind-mounting the whole project into the container, which this repo does not do
+- persisted Actian data is stored under `data/actian-vectorai/`
 
 ## Using the pgvector backend
 
@@ -179,6 +270,7 @@ Then set `.env`:
 ANN_BACKEND=pgvector
 PGVECTOR_DATABASE_URL=postgresql:///ann_indexes_pgvector
 PGVECTOR_ADMIN_DATABASE_URL=postgresql:///postgres
+PGVECTOR_MAINTENANCE_WORK_MEM=512MB
 VECTOR_COUNT=1000000
 INCLUDE_HNSW=true
 INCLUDE_IVF=true
@@ -217,7 +309,6 @@ If you change `VECTOR_COUNT`, restart the app so the new value is picked up.
 This setting matters a lot:
 
 - it changes index build time
-- it changes index size
 - it can meaningfully change latency and recall behavior
 
 The app currently treats vector count as an app-level setting, not a live in-UI control, because cached index files are keyed by that value.
@@ -234,7 +325,7 @@ This file is intended as a simple inspection log so you can compare runs across:
 
 - different parameter settings
 - different app sessions
-- different backends such as `faiss` and `pgvector`
+- different backends such as `faiss`, `pgvector`, and `actian`
 
 Each saved row includes run metadata plus the per-index result values, such as:
 
@@ -295,7 +386,6 @@ This table split is deliberate. It avoids planner ambiguity when both approximat
 The pgvector backend also creates a small metadata table to store:
 
 - index build time
-- index size
 
 Build-time cache keys for pgvector are effectively:
 
@@ -321,30 +411,31 @@ Query-time-only changes still avoid rebuilds:
   - how many queries are used for the current comparison
   - more queries means slower runs but more stable averages
 - `Timing repeats`
-  - how many times the batch search is repeated for average timing
+  - how many times the query loop is repeated for average timing
 - `Single-query sample size`
   - how many individual queries are timed to estimate p95 latency
 
 ### HNSW
 
-- `M`
-  - graph connectivity
-  - higher values generally improve recall but increase build time and index size
-- `efConstruction`
-  - build-time search breadth
-  - higher values generally improve graph quality but make builds slower
-- `efSearch`
-  - query-time search breadth
-  - higher values generally improve recall but increase latency
+- `Connections per node (M)`
+  - how many connections each node keeps in the graph
+  - higher values usually improve recall and make navigation easier, but increase memory use and build time
+- `Build effort (efConstruction)`
+  - how much effort is spent building the graph
+  - higher values usually create better connections, which improves recall, but increase build time
+- `Search effort (efSearch)`
+  - how many candidates are explored during search
+  - higher values usually improve recall, but increase query latency
 
 ### IVF
 
-- `nlist`
-  - number of coarse partitions
-  - higher values can improve selectivity but make build/training more expensive
-- `nprobe`
-  - number of partitions searched at query time
-  - higher values generally improve recall but increase latency
+- `Clusters (nlist)`
+  - how many coarse clusters IVF creates when grouping vectors
+  - higher values make search more selective, but increase build cost and make tuning more important
+- `Clusters searched (nprobe)`
+  - how many IVF clusters are searched for each query
+  - higher values usually improve recall by searching more of the space, but increase query latency
+  - for the current Actian demo, each `nlist` / `nprobe` combination is prebuilt because the validated server image does not support changing `nprobe` at query time
 
 ## Reading the results
 
@@ -365,17 +456,28 @@ Recall is displayed as a percentage for readability.
 - `1.0x` means the same as Flat
 - below `1.0x` means slower than Flat
 
+The control-group summaries are intentionally where prep/build context lives:
+
+- `Flat stored index` in the `Settings` column for `faiss`
+- `Prep time` and, for `faiss`, stored index size in the `HNSW` and `IVF` columns
+
+That keeps the run-to-run cards focused on the metrics that actually change with search settings.
+
 ## Developer commands
 
 ```bash
 just ui
+just actian-up
+just actian-down
 just format
 just lint
 just pylint
+just pyright
 just check
+just fix
 just test
 just reset-pgvector
-just fix
+just clean
 ```
 
 Direct `uv` equivalents:
@@ -384,7 +486,9 @@ Direct `uv` equivalents:
 uv run streamlit run ann_app.py
 uv run black .
 uv run ruff check .
-uv run pylint ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_backend_contract.py tests/test_pgvector_backend.py
+uv run pylint ann_actian.py ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_actian_backend.py tests/test_backend_contract.py tests/test_pgvector_backend.py
+uv run pyright
+uv run pytest
 ```
 
 ## Code layout
@@ -397,10 +501,16 @@ uv run pylint ann_app.py ann_backend.py ann_faiss.py ann_pgvector.py tests/test_
   - FAISS implementation, file-backed cache handling, and benchmark helpers
 - [ann_pgvector.py](./ann_pgvector.py)
   - pgvector implementation, database/index setup, and PostgreSQL-backed search execution
+- [ann_actian.py](./ann_actian.py)
+  - Actian VectorAI DB implementation and benchmark helpers for the remote service backend
 - [pyproject.toml](./pyproject.toml)
   - project configuration, linting, and Python/tooling settings
 - [justfile](./justfile)
   - convenience commands for setup and local development
+- [docker-compose.actian-vectorai.yml](./docker-compose.actian-vectorai.yml)
+  - local container definition for running the Actian VectorAI DB service
+- [tests/test_actian_backend.py](./tests/test_actian_backend.py)
+  - Actian integration tests against a running local VectorAI DB instance
 - [tests/test_backend_contract.py](./tests/test_backend_contract.py)
   - FAISS backend contract tests on a tiny synthetic dataset
 - [tests/test_pgvector_backend.py](./tests/test_pgvector_backend.py)

@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from ann_actian import ActianBackend
 from ann_backend import AnnBackend, BackendSettings, ProgressUpdate, RunConfig
 from ann_faiss import FaissBackend
 from ann_pgvector import PgvectorBackend
@@ -30,6 +31,10 @@ DEFAULT_INCLUDE_IVF = True
 DEFAULT_BACKEND = "faiss"
 DEFAULT_PGVECTOR_DATABASE_URL = "postgresql:///ann_indexes_pgvector"
 DEFAULT_PGVECTOR_ADMIN_DATABASE_URL = "postgresql:///postgres"
+DEFAULT_PGVECTOR_MAINTENANCE_WORK_MEM = "512MB"
+DEFAULT_ACTIAN_VECTORAI_URL = "localhost:50051"
+DEFAULT_ACTIAN_VECTORAI_DATA_DIR = "data/actian-vectorai"
+IVF_NPROBE_OPTIONS = [1, 2, 4, 8, 16, 32, 64, 128]
 
 
 def load_env_file(path: Path = ENV_PATH) -> None:
@@ -77,13 +82,29 @@ def read_env_value(name: str, default: str) -> str:
     return os.getenv(name, default).strip()
 
 
+def default_include_hnsw(backend_name: str) -> bool:
+    return DEFAULT_INCLUDE_HNSW
+
+
+def default_include_ivf(backend_name: str) -> bool:
+    return DEFAULT_INCLUDE_IVF
+
+
+def default_ivf_nprobe(nlist: int) -> int:
+    target = min(max(1, nlist // 16), IVF_NPROBE_OPTIONS[-1])
+    return max(option for option in IVF_NPROBE_OPTIONS if option <= target)
+
+
 load_env_file()
 VECTOR_COUNT = read_vector_count()
-INCLUDE_HNSW = read_bool_env("INCLUDE_HNSW", DEFAULT_INCLUDE_HNSW)
-INCLUDE_IVF = read_bool_env("INCLUDE_IVF", DEFAULT_INCLUDE_IVF)
 BACKEND_NAME = read_backend_name()
+INCLUDE_HNSW = read_bool_env("INCLUDE_HNSW", default_include_hnsw(BACKEND_NAME))
+INCLUDE_IVF = read_bool_env("INCLUDE_IVF", default_include_ivf(BACKEND_NAME))
 PGVECTOR_DATABASE_URL = read_env_value("PGVECTOR_DATABASE_URL", DEFAULT_PGVECTOR_DATABASE_URL)
 PGVECTOR_ADMIN_DATABASE_URL = read_env_value("PGVECTOR_ADMIN_DATABASE_URL", DEFAULT_PGVECTOR_ADMIN_DATABASE_URL)
+PGVECTOR_MAINTENANCE_WORK_MEM = read_env_value("PGVECTOR_MAINTENANCE_WORK_MEM", DEFAULT_PGVECTOR_MAINTENANCE_WORK_MEM)
+ACTIAN_VECTORAI_URL = read_env_value("ACTIAN_VECTORAI_URL", DEFAULT_ACTIAN_VECTORAI_URL)
+ACTIAN_VECTORAI_DATA_DIR = Path(read_env_value("ACTIAN_VECTORAI_DATA_DIR", DEFAULT_ACTIAN_VECTORAI_DATA_DIR))
 
 
 def build_backend() -> AnnBackend:
@@ -93,6 +114,9 @@ def build_backend() -> AnnBackend:
         vector_count=VECTOR_COUNT,
         database_url=PGVECTOR_DATABASE_URL,
         admin_database_url=PGVECTOR_ADMIN_DATABASE_URL,
+        pgvector_maintenance_work_mem=PGVECTOR_MAINTENANCE_WORK_MEM,
+        service_url=ACTIAN_VECTORAI_URL,
+        service_data_dir=ACTIAN_VECTORAI_DATA_DIR,
         include_hnsw=INCLUDE_HNSW,
         include_ivf=INCLUDE_IVF,
         default_hnsw_m=DEFAULT_HNSW_M,
@@ -103,10 +127,14 @@ def build_backend() -> AnnBackend:
         return FaissBackend(settings)
     if BACKEND_NAME == "pgvector":
         return PgvectorBackend(settings)
+    if BACKEND_NAME == "actian":
+        return ActianBackend(settings)
     raise ValueError(f"Unsupported ANN_BACKEND value: {BACKEND_NAME!r}")
 
 
 BACKEND = build_backend()
+INCLUDE_HNSW = BACKEND.settings.include_hnsw
+INCLUDE_IVF = BACKEND.settings.include_ivf
 
 
 def configure_page() -> None:
@@ -121,41 +149,55 @@ def configure_page() -> None:
 
 def to_card_html(row: pd.Series) -> str:
     family = row["family"]
+    stat_boxes = [
+        """
+        <div class="stat-box">
+          <div class="stat-label">Avg Latency</div>
+          <div class="stat-value">{avg_latency_ms:.3f} ms</div>
+        </div>
+        """.format(avg_latency_ms=row["avg_latency_ms"]),
+        """
+        <div class="stat-box">
+          <div class="stat-label">Recall</div>
+          <div class="stat-value">{recall:.1f}%</div>
+        </div>
+        """.format(recall=row["recall_at_10"] * 100),
+        """
+        <div class="stat-box">
+          <div class="stat-label">Vs Flat</div>
+          <div class="stat-value">{speedup:.2f}x</div>
+        </div>
+        """.format(speedup=row["speedup_vs_flat"]),
+        """
+        <div class="stat-box">
+          <div class="stat-label">p95 Latency</div>
+          <div class="stat-value">{p95_latency_ms:.3f} ms</div>
+        </div>
+        """.format(p95_latency_ms=row["p95_latency_ms"]),
+    ]
+    stats_html = "".join(stat_boxes)
     return f"""
     <div class="index-card">
       <div class="index-label">Index</div>
       <div class="index-title">{family}</div>
       <div class="index-config">{row['config_text']}</div>
       <div class="stat-grid">
-        <div class="stat-box">
-          <div class="stat-label">Avg Latency</div>
-          <div class="stat-value">{row['avg_latency_ms']:.3f} ms</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Recall</div>
-          <div class="stat-value">{row['recall_at_10'] * 100:.1f}%</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Vs Flat</div>
-          <div class="stat-value">{row['speedup_vs_flat']:.2f}x</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">p95 Latency</div>
-          <div class="stat-value">{row['p95_latency_ms']:.3f} ms</div>
-        </div>
+        {stats_html}
       </div>
     </div>
     """
 
 
 def backend_display_name() -> str:
+    if BACKEND_NAME == "actian":
+        return "Actian VectorAI DB"
     if BACKEND_NAME == "pgvector":
         return "pgvector"
     return "FAISS"
 
 
 def default_query_count() -> int:
-    if BACKEND_NAME == "pgvector":
+    if BACKEND_NAME in {"pgvector", "actian"}:
         return DEFAULT_PGVECTOR_QUERY_COUNT
     return DEFAULT_QUERY_COUNT
 
@@ -169,6 +211,7 @@ def render_header() -> None:
             <div class="backend-badge">{backend_display_name()}</div>
           </div>
           <p class="hero-copy">Comparing index performance using the SIFT1M dataset.</p>
+          <p class="hero-copy">Latency is measured as warmed single-query latency. Cross-backend numbers are indicative, not benchmark-grade.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -204,6 +247,8 @@ def render_controls() -> RunConfig | None:
             value=128,
             step=32,
         )
+        if BACKEND_NAME == "faiss":
+            st.markdown(f'<div class="cache-meta">{BACKEND.flat_summary()}</div>', unsafe_allow_html=True)
 
     hnsw_m: int | None = None
     hnsw_ef_construction: int | None = None
@@ -212,34 +257,40 @@ def render_controls() -> RunConfig | None:
         with columns[next_column_index]:
             st.markdown("### HNSW")
             hnsw_m = st.slider(
-                "M",
+                "Connections per node (M)",
                 min_value=8,
                 max_value=64,
                 value=DEFAULT_HNSW_M,
                 step=4,
                 help=(
-                    "How many graph connections each vector keeps. Higher M usually improves recall, "
-                    "but makes the index larger and slower to build."
+                    "How many connections each node has in the graph. "
+                    "Higher values improve recall and make navigation easier, "
+                    "but increase memory usage and build time."
                 ),
             )
             hnsw_ef_construction = st.slider(
-                "efConstruction",
+                "Build effort (efConstruction)",
                 min_value=40,
                 max_value=400,
                 value=DEFAULT_HNSW_EF_CONSTRUCTION,
                 step=20,
                 help=(
-                    "How much work HNSW does while building the graph. Higher values usually improve graph "
-                    "quality and recall, but increase build time."
+                    "How much effort is spent building the graph. "
+                    "Higher values create better connections between nodes, "
+                    "which improves recall, but increases build time."
                 ),
             )
             hnsw_ef_search = st.slider(
-                "efSearch",
+                "Search effort (efSearch)",
                 min_value=8,
                 max_value=256,
                 value=DEFAULT_HNSW_EF_SEARCH,
                 step=8,
-                help="How many candidates HNSW explores at query time. Higher values usually improve recall, but increase query latency.",
+                help=(
+                    "How many candidates are explored during search. "
+                    "Higher values improve recall by exploring more options, "
+                    "but increase query latency."
+                ),
             )
             hnsw_cache_summary = BACKEND.hnsw_summary(int(hnsw_m), int(hnsw_ef_construction))
             st.markdown(f'<div class="cache-meta">{hnsw_cache_summary}</div>', unsafe_allow_html=True)
@@ -251,21 +302,32 @@ def render_controls() -> RunConfig | None:
         with columns[next_column_index]:
             st.markdown("### IVF")
             ivf_nlist = st.select_slider(
-                "nlist",
+                "Clusters (nlist)",
                 options=BACKEND.available_nlist_options(),
                 value=DEFAULT_IVF_NLIST,
                 help=(
-                    "How many coarse partitions IVF creates. Higher nlist can make search more selective, "
-                    "but training and building become more expensive and tuning matters more."
+                    "How many coarse clusters IVF creates when it groups the vectors. "
+                    "Higher values make search more selective, but increase build cost and make tuning more important. "
+                    "As nlist grows, the default nprobe also grows so search still covers a sensible fraction of the clusters."
                 ),
             )
+
             ivf_nprobe = st.select_slider(
-                "nprobe",
-                options=[1, 2, 4, 8, 16, 32, 64, 128],
-                value=DEFAULT_IVF_NPROBE,
-                help="How many IVF partitions are searched for each query. Higher nprobe usually improves recall, but increases query latency.",
+                "Clusters searched (nprobe)",
+                options=IVF_NPROBE_OPTIONS,
+                value=default_ivf_nprobe(int(ivf_nlist)),
+                help=(
+                    "How many IVF clusters are searched for each query. "
+                    "Higher values usually improve recall by searching more of the space, but increase query latency."
+                    if BACKEND_NAME != "actian"
+                    else "How many IVF clusters are searched for each query. "
+                    "In this Actian demo, each nlist/nprobe combination is prebuilt because the current server image "
+                    "does not support changing nprobe at query time."
+                ),
             )
-            ivf_cache_summary = BACKEND.ivf_summary(int(ivf_nlist))
+            if BACKEND_NAME == "actian":
+                st.caption("Actian note: changing `nprobe` prepares a separate IVF collection for that setting.")
+            ivf_cache_summary = BACKEND.ivf_summary(int(ivf_nlist), int(ivf_nprobe))
             st.markdown(f'<div class="cache-meta">{ivf_cache_summary}</div>', unsafe_allow_html=True)
 
     run_clicked = st.button("Run", use_container_width=True, type="primary")
@@ -293,7 +355,8 @@ def render_controls() -> RunConfig | None:
 def render_cards(df: pd.DataFrame) -> None:
     cols = st.columns(len(df), gap="large")
     for column, (_, row) in zip(cols, df.iterrows(), strict=False):
-        column.markdown(to_card_html(row), unsafe_allow_html=True)
+        with column:
+            st.html(to_card_html(row))
 
 
 def normalize_saved_results(saved_results: pd.DataFrame) -> pd.DataFrame:
@@ -304,7 +367,11 @@ def normalize_saved_results(saved_results: pd.DataFrame) -> pd.DataFrame:
     if "run_id" in normalized.columns:
         normalized = normalized.drop(columns=["run_id"])
     if "timestamp" in normalized.columns:
-        parsed = pd.to_datetime(normalized["timestamp"], errors="coerce", utc=True)
+        raw_timestamps = normalized["timestamp"].astype("string")
+        parsed = pd.to_datetime(raw_timestamps, format="%Y-%m-%d %H:%M:%S %Z", errors="coerce", utc=True)
+        missing_mask = parsed.isna()
+        if missing_mask.any():
+            parsed.loc[missing_mask] = pd.to_datetime(raw_timestamps[missing_mask], format="ISO8601", errors="coerce", utc=True)
         if parsed.notna().any():
             local_values = parsed.dt.tz_convert(datetime.now().astimezone().tzinfo)
             formatted = local_values.dt.strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -315,7 +382,7 @@ def normalize_saved_results(saved_results: pd.DataFrame) -> pd.DataFrame:
 
 def append_results_to_csv(results: pd.DataFrame, metadata: dict[str, Any]) -> None:
     RESULTS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    run_timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    run_timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
 
     rows = results.copy()
     rows.insert(0, "timestamp", run_timestamp)
@@ -336,6 +403,7 @@ def append_results_to_csv(results: pd.DataFrame, metadata: dict[str, Any]) -> No
 
 
 def render_results(history: list[dict[str, Any]]) -> None:
+    st.markdown('<div id="results-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="run-history">', unsafe_allow_html=True)
     total_runs = len(history)
     for run_index, entry in enumerate(history, start=1):
@@ -349,6 +417,19 @@ def render_results(history: list[dict[str, Any]]) -> None:
         )
         render_cards(entry["results"])
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def scroll_to_results() -> None:
+    st.html("""
+        <script>
+        window.requestAnimationFrame(() => {
+          const anchor = document.getElementById("results-anchor");
+          if (anchor) {
+            anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        });
+        </script>
+        """)
 
 
 def main() -> None:
@@ -381,9 +462,13 @@ def main() -> None:
         history = st.session_state.setdefault("results_history", [])
         history.insert(0, {"results": results, "metadata": metadata})
         st.session_state["results_history"] = history[:8]
+        st.session_state["scroll_to_results"] = True
+        st.rerun()
 
     if "results_history" in st.session_state:
         render_results(st.session_state["results_history"])
+        if st.session_state.pop("scroll_to_results", False):
+            scroll_to_results()
 
 
 if __name__ == "__main__":

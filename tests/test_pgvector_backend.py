@@ -69,10 +69,8 @@ def test_pgvector_cache_summaries_report_built_metadata(pgvector_backend: Pgvect
 
     pgvector_backend.ensure_initial_artifacts()
 
-    assert "Build time:" in pgvector_backend.hnsw_summary(16, 80)
-    assert "Index size:" in pgvector_backend.hnsw_summary(16, 80)
-    assert "Build time:" in pgvector_backend.ivf_summary(64)
-    assert "Index size:" in pgvector_backend.ivf_summary(64)
+    assert "Prep time:" in pgvector_backend.hnsw_summary(16, 80)
+    assert "Prep time:" in pgvector_backend.ivf_summary(64)
 
 
 def test_pgvector_run_comparison_returns_expected_rows_and_metrics(pgvector_backend: PgvectorBackend) -> None:

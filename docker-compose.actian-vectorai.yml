@@ -1,0 +1,10 @@
+services:
+  actian-vectorai:
+    image: williamimoh/actian-vectorai-db:latest
+    container_name: ann-indexes-actian
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./data/actian-vectorai:/data
+    restart: unless-stopped
+    stop_grace_period: 2m

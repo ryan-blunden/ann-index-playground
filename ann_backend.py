@@ -25,6 +25,9 @@ class BackendSettings:
     vector_count: int
     database_url: str | None = None
     admin_database_url: str | None = None
+    pgvector_maintenance_work_mem: str | None = None
+    service_url: str | None = None
+    service_data_dir: Path | None = None
     include_hnsw: bool = True
     include_ivf: bool = True
     default_hnsw_m: int = 32
@@ -47,6 +50,7 @@ class RunConfig:
 
 class AnnBackend(Protocol):
     name: str
+    settings: BackendSettings
 
     def initial_artifacts_exist(self) -> bool: ...
 
@@ -54,8 +58,10 @@ class AnnBackend(Protocol):
 
     def available_nlist_options(self) -> list[int]: ...
 
+    def flat_summary(self) -> str: ...
+
     def hnsw_summary(self, m: int, ef_construction: int) -> str: ...
 
-    def ivf_summary(self, nlist: int) -> str: ...
+    def ivf_summary(self, nlist: int, nprobe: int | None = None) -> str: ...
 
     def run_comparison(self, config: RunConfig) -> tuple[pd.DataFrame, dict[str, Any]]: ...
