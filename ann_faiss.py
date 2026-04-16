@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig
+from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig, recommended_ivf_nlist_options
 
 try:
     import psutil as psutil_module
@@ -195,7 +195,7 @@ class FaissBackend:
         return f"{self.settings.dataset_path.stem}_{stat.st_size}_{int(stat.st_mtime)}"
 
     def available_nlist_options(self) -> list[int]:
-        return [value for value in [256, 512, 1024, 2048, 4096, 8192] if value <= self.settings.vector_count]
+        return recommended_ivf_nlist_options(self.settings.vector_count, max_option=4096)
 
     def initial_artifacts_exist(self) -> bool:
         return all(path.exists() for path in self._initial_artifact_paths())
@@ -392,8 +392,8 @@ class FaissBackend:
         metadata = self._read_cache_metadata(index_path)
         size_text = f"Stored index: {metadata['index_size_mb']:.1f} MB"
         if metadata["build_time_s"] <= 0:
-            return f"Prep time: cached · {size_text}"
-        return f"Prep time: {metadata['build_time_s']:.1f} s · {size_text}"
+            return f"Build time: cached · {size_text}"
+        return f"Build time: {metadata['build_time_s']:.1f} s · {size_text}"
 
     def _format_flat_summary(self, index_path: Path) -> str:
         if not index_path.exists():

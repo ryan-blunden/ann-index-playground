@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import fcntl
 import os
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -9,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from ann_actian import ActianBackend
-from ann_backend import AnnBackend, BackendSettings, ProgressUpdate, RunConfig
+from ann_backend import AnnBackend, BackendSettings, ProgressUpdate, RunConfig, recommended_ivf_nprobe
 from ann_faiss import FaissBackend
 from ann_pgvector import PgvectorBackend
 
@@ -18,11 +21,12 @@ CACHE_DIR = Path("cache")
 RESULTS_CSV_PATH = Path("data/results.csv")
 ENV_PATH = Path(".env")
 CSS_PATH = Path(".streamlit/styles.css")
+INITIAL_CACHE_LOCK_PATH = CACHE_DIR / ".initial_cache.lock"
 DEFAULT_HNSW_M = 32
 DEFAULT_HNSW_EF_CONSTRUCTION = 200
 DEFAULT_HNSW_EF_SEARCH = 64
-DEFAULT_IVF_NLIST = 256
-DEFAULT_IVF_NPROBE = 16
+DEFAULT_IVF_NLIST = 1024
+DEFAULT_IVF_NPROBE = 32
 DEFAULT_QUERY_COUNT = 1_000
 DEFAULT_PGVECTOR_QUERY_COUNT = 500
 DEFAULT_VECTOR_COUNT = 1_000_000
@@ -34,7 +38,7 @@ DEFAULT_PGVECTOR_ADMIN_DATABASE_URL = "postgresql:///postgres"
 DEFAULT_PGVECTOR_MAINTENANCE_WORK_MEM = "512MB"
 DEFAULT_ACTIAN_VECTORAI_URL = "localhost:50051"
 DEFAULT_ACTIAN_VECTORAI_DATA_DIR = "data/actian-vectorai"
-IVF_NPROBE_OPTIONS = [1, 2, 4, 8, 16, 32, 64, 128]
+IVF_NPROBE_OPTIONS = [1, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128]
 
 
 def load_env_file(path: Path = ENV_PATH) -> None:
@@ -90,9 +94,20 @@ def default_include_ivf(backend_name: str) -> bool:
     return DEFAULT_INCLUDE_IVF
 
 
+def default_hnsw_ef_search(backend_name: str) -> int:
+    return DEFAULT_HNSW_EF_SEARCH
+
+
 def default_ivf_nprobe(nlist: int) -> int:
-    target = min(max(1, nlist // 16), IVF_NPROBE_OPTIONS[-1])
+    target = min(max(1, recommended_ivf_nprobe(nlist)), IVF_NPROBE_OPTIONS[-1])
     return max(option for option in IVF_NPROBE_OPTIONS if option <= target)
+
+
+def default_ivf_nlist_value(backend: AnnBackend) -> int:
+    options = backend.available_nlist_options()
+    if DEFAULT_IVF_NLIST in options:
+        return DEFAULT_IVF_NLIST
+    return max(value for value in options if value <= DEFAULT_IVF_NLIST) if options else DEFAULT_IVF_NLIST
 
 
 load_env_file()
@@ -145,6 +160,24 @@ def configure_page() -> None:
         initial_sidebar_state="collapsed",
     )
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+
+
+@contextmanager
+def initial_cache_lock(on_wait: Any | None = None) -> Any:
+    INITIAL_CACHE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with INITIAL_CACHE_LOCK_PATH.open("w", encoding="utf-8") as lock_file:
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if on_wait is not None:
+                    on_wait()
+                time.sleep(0.5)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def to_card_html(row: pd.Series) -> str:
@@ -210,8 +243,7 @@ def render_header() -> None:
             <h1>ANN Index Playground</h1>
             <div class="backend-badge">{backend_display_name()}</div>
           </div>
-          <p class="hero-copy">Comparing index performance using the SIFT1M dataset.</p>
-          <p class="hero-copy">Latency is measured as warmed single-query latency. Cross-backend numbers are indicative, not benchmark-grade.</p>
+          <p class="hero-copy">Comparing ANN index performance using the SIFT1M dataset.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -270,10 +302,10 @@ def render_controls() -> RunConfig | None:
             )
             hnsw_ef_construction = st.slider(
                 "Build effort (efConstruction)",
-                min_value=40,
-                max_value=400,
+                min_value=64,
+                max_value=512,
                 value=DEFAULT_HNSW_EF_CONSTRUCTION,
-                step=20,
+                step=8,
                 help=(
                     "How much effort is spent building the graph. "
                     "Higher values create better connections between nodes, "
@@ -282,9 +314,9 @@ def render_controls() -> RunConfig | None:
             )
             hnsw_ef_search = st.slider(
                 "Search effort (efSearch)",
-                min_value=8,
+                min_value=16,
                 max_value=256,
-                value=DEFAULT_HNSW_EF_SEARCH,
+                value=default_hnsw_ef_search(BACKEND_NAME),
                 step=8,
                 help=(
                     "How many candidates are explored during search. "
@@ -304,11 +336,12 @@ def render_controls() -> RunConfig | None:
             ivf_nlist = st.select_slider(
                 "Clusters (nlist)",
                 options=BACKEND.available_nlist_options(),
-                value=DEFAULT_IVF_NLIST,
+                value=default_ivf_nlist_value(BACKEND),
                 help=(
                     "How many coarse clusters IVF creates when it groups the vectors. "
                     "Higher values make search more selective, but increase build cost and make tuning more important. "
-                    "As nlist grows, the default nprobe also grows so search still covers a sensible fraction of the clusters."
+                    "The default starts near the square-root scale of the dataset size, and the default nprobe grows with the square-root scale of nlist. "
+                    "Tune nprobe first; tune nlist when the whole latency/recall curve still looks wrong."
                 ),
             )
 
@@ -447,8 +480,23 @@ def main() -> None:
                 progress_bar.progress(update.current_step / update.total_steps)
                 status_text.write(update.message)
 
-            BACKEND.ensure_initial_artifacts(progress=update_progress)
-            st.session_state["initial_cache_ready"] = True
+            waiting_for_other_session = False
+
+            def update_waiting_status() -> None:
+                nonlocal waiting_for_other_session
+                waiting_for_other_session = True
+                progress_bar.progress(0.05)
+                status_text.write("Another session is preparing the cache. Waiting for it to finish...")
+
+            with initial_cache_lock(on_wait=update_waiting_status):
+                if BACKEND.initial_artifacts_exist():
+                    st.session_state["initial_cache_ready"] = True
+                else:
+                    if waiting_for_other_session:
+                        progress_bar.progress(0.1)
+                        status_text.write("Cache lock acquired. Checking whether any build work is still needed...")
+                    BACKEND.ensure_initial_artifacts(progress=update_progress)
+                    st.session_state["initial_cache_ready"] = True
             st.rerun()
 
     render_header()

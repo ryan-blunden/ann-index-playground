@@ -5,6 +5,9 @@ services:
     ports:
       - "50051:50051"
     volumes:
-      - ./data/actian-vectorai:/data
+      - actian-vectorai-data:/data
     restart: unless-stopped
     stop_grace_period: 2m
+
+volumes:
+  actian-vectorai-data:

@@ -74,7 +74,8 @@ It measures:
 Preparation metadata is shown separately under the controls:
 
 - `faiss` shows stored index size for `Flat`, `HNSW`, and `IVF`
-- all backends show backend-specific `Prep time` for `HNSW` and `IVF`
+- `faiss` shows `Build time` for `HNSW` and `IVF`
+- `pgvector` and `actian` show backend-specific `Prep time` for `HNSW` and `IVF`
 
 ## Dataset
 
@@ -228,9 +229,12 @@ Notes:
 - each Actian index family is built in its own collection: one `Flat` collection, one `HNSW` collection, and one `IVF` collection
 - for the validated upstream image, IVF collections only became searchable after `rebuild_index()` followed by `open_collection()`, so the backend performs that explicitly after loading IVF data
 - on the validated `Actian VectorAI DB 1.0.0 / VDE 1.0.0` image, query-time `ivf_nprobe` overrides appeared to be ignored by the server, so the app materializes separate Actian IVF collections for each `nlist` / `nprobe` pair instead
-- the side-panel `Prep time` values are backend-specific preparation costs, not strict apples-to-apples build benchmarks
+- the side-panel timing label depends on the backend:
+- `faiss` uses `Build time` because it is building the index in-process
+- `pgvector` and `actian` use `Prep time` because the setup cost includes backend-specific work beyond pure index construction
+- these are still not strict apples-to-apples build benchmarks across backends
 - Docker overhead should be small relative to the ANN work because the client already talks to a separate gRPC server; the main thing to avoid is bind-mounting the whole project into the container, which this repo does not do
-- persisted Actian data is stored under `data/actian-vectorai/`
+- the default Docker Compose setup stores persisted Actian data in the named Docker volume `actian-vectorai-data`
 
 ## Using the pgvector backend
 
@@ -402,6 +406,11 @@ Query-time-only changes still avoid rebuilds:
 
 ## Understanding the controls
 
+Current shared UI defaults:
+
+- `HNSW`: `M=32`, `efConstruction=200`, `efSearch=64`
+- `IVF`: `nlist=1024`, `nprobe=32`
+
 ### Search settings
 
 - `Vectors`
@@ -426,14 +435,19 @@ Query-time-only changes still avoid rebuilds:
 - `Search effort (efSearch)`
   - how many candidates are explored during search
   - higher values usually improve recall, but increase query latency
+  - the HNSW slider bounds are kept in a practical range based on common documented defaults and tuning ranges across pgvector, Milvus, and Qdrant rather than exposing arbitrarily tiny or huge values
 
 ### IVF
 
 - `Clusters (nlist)`
   - how many coarse clusters IVF creates when grouping vectors
+  - the default starts near the square-root scale of the dataset size, which is a common practical starting point for IVF
+  - the UI uses a graduated practical set of `nlist` values so you can explore structure changes without turning the control into micro-tuning
   - higher values make search more selective, but increase build cost and make tuning more important
 - `Clusters searched (nprobe)`
   - how many IVF clusters are searched for each query
+  - the default starts near the square-root scale of `nlist`, which is a common practical starting point for probes
+  - the UI uses a denser practical set of probe values so tuning is easier than a pure powers-of-two scale
   - higher values usually improve recall by searching more of the space, but increase query latency
   - for the current Actian demo, each `nlist` / `nprobe` combination is prebuilt because the validated server image does not support changing `nprobe` at query time
 
@@ -459,7 +473,8 @@ Recall is displayed as a percentage for readability.
 The control-group summaries are intentionally where prep/build context lives:
 
 - `Flat stored index` in the `Settings` column for `faiss`
-- `Prep time` and, for `faiss`, stored index size in the `HNSW` and `IVF` columns
+- `Build time` for `faiss`, or backend-specific `Prep time` for `pgvector` and `actian`
+- for `faiss`, stored index size in the `HNSW` and `IVF` columns
 
 That keeps the run-to-run cards focused on the metrics that actually change with search settings.
 

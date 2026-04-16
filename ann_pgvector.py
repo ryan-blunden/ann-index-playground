@@ -13,7 +13,7 @@ from pgvector.psycopg import register_vector
 from psycopg import sql
 from psycopg.errors import DuplicateTable, ProgramLimitExceeded, UniqueViolation
 
-from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig
+from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig, recommended_ivf_nlist_options
 from ann_faiss import load_sift_hdf5, overlap_recall_at_k, percentile
 
 
@@ -47,7 +47,7 @@ class PgvectorBackend:
         return f"ann_{self.settings.dataset_path.stem.replace('-', '_')[:12]}_{self.settings.vector_count}_{digest}"
 
     def available_nlist_options(self) -> list[int]:
-        return [value for value in [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192] if value <= self.settings.vector_count]
+        return recommended_ivf_nlist_options(self.settings.vector_count, max_option=4096)
 
     def initial_artifacts_exist(self) -> bool:
         if not self._database_exists():

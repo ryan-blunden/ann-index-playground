@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from actian_vectorai import (
     ChannelClosedError,
+    CollectionNotFoundError,
     HnswConfigDiff,
     PointStruct,
     SearchParams,
@@ -22,12 +23,13 @@ from actian_vectorai import (
 from actian_vectorai.models.enums import Distance, IndexType
 from actian_vectorai.models.vde import IvfConfigDiff
 
-from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig
+from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig, recommended_ivf_nlist_options, recommended_ivf_nprobe
 from ann_faiss import load_sift_hdf5, overlap_recall_at_k, percentile
 
 
 class ActianBackend:
     name = "actian"
+    client_timeout_s = 180.0
 
     def __init__(self, settings: BackendSettings) -> None:
         self.settings = settings
@@ -54,10 +56,10 @@ class ActianBackend:
         return f"ann_{self.settings.dataset_path.stem.replace('-', '_')[:12]}_{self.settings.vector_count}_{digest}"
 
     def available_nlist_options(self) -> list[int]:
-        return [value for value in [16, 32, 64, 128, 256, 512, 1024] if value <= self.settings.vector_count]
+        return recommended_ivf_nlist_options(self.settings.vector_count, max_option=1024)
 
     def default_ivf_nprobe(self, nlist: int) -> int:
-        return min(max(1, nlist // 8), nlist)
+        return min(max(1, recommended_ivf_nprobe(nlist)), nlist)
 
     def initial_artifacts_exist(self) -> bool:
         try:
@@ -187,14 +189,18 @@ class ActianBackend:
                 assert config.ivf_nlist is not None
                 assert config.ivf_nprobe is not None
                 ivf_metadata = self._ensure_ivf_collection(client, config.ivf_nlist, config.ivf_nprobe)
-                ivf_search = self._search_collection(
-                    client,
-                    collection_name=self._ivf_collection_name(config.ivf_nlist, config.ivf_nprobe),
-                    queries=queries,
-                    k=config.k,
-                    repeats=config.repeats,
-                    latency_sample_size=config.latency_sample_size,
-                )
+                # IVF collection rebuild/open happens on a fresh client during preparation.
+                # Search with a fresh client too, otherwise the first query against a newly
+                # built IVF variant can observe a stale view and return empty results.
+                with self._client() as ivf_client:
+                    ivf_search = self._search_collection(
+                        ivf_client,
+                        collection_name=self._ivf_collection_name(config.ivf_nlist, config.ivf_nprobe),
+                        queries=queries,
+                        k=config.k,
+                        repeats=config.repeats,
+                        latency_sample_size=config.latency_sample_size,
+                    )
                 rows.append(
                     {
                         "family": "IVF",
@@ -219,7 +225,7 @@ class ActianBackend:
             return pd.DataFrame(rows), metadata
 
     def _client(self) -> VectorAIClient:
-        return VectorAIClient(self.service_url, timeout=30.0)
+        return VectorAIClient(self.service_url, timeout=self.client_timeout_s)
 
     def _collection_ready(self, client: VectorAIClient, collection_name: str) -> bool:
         if not client.collections.exists(collection_name):
@@ -238,7 +244,14 @@ class ActianBackend:
             collection_name=collection_name,
             index_type=IndexType.INDEX_TYPE_FLAT,
         )
-        self._upload_dataset(collection_name)
+        self._upload_dataset(
+            collection_name,
+            recreate_collection=lambda recreate_client: self._recreate_collection(
+                recreate_client,
+                collection_name=collection_name,
+                index_type=IndexType.INDEX_TYPE_FLAT,
+            ),
+        )
         build_time_s = time.perf_counter() - start
         with self._client() as post_client:
             metadata = self._write_metadata(metadata_path, build_time_s, self._collection_size_mb(post_client, collection_name))
@@ -257,7 +270,15 @@ class ActianBackend:
             index_type=IndexType.INDEX_TYPE_HNSW,
             hnsw_config=HnswConfigDiff(m=m, ef_construct=ef_construction),
         )
-        self._upload_dataset(collection_name)
+        self._upload_dataset(
+            collection_name,
+            recreate_collection=lambda recreate_client: self._recreate_collection(
+                recreate_client,
+                collection_name=collection_name,
+                index_type=IndexType.INDEX_TYPE_HNSW,
+                hnsw_config=HnswConfigDiff(m=m, ef_construct=ef_construction),
+            ),
+        )
         build_time_s = time.perf_counter() - start
         with self._client() as post_client:
             metadata = self._write_metadata(metadata_path, build_time_s, self._collection_size_mb(post_client, collection_name))
@@ -280,12 +301,25 @@ class ActianBackend:
                 training_sample_size=min(self.settings.vector_count, max(10_000, nlist * 64)),
             ),
         )
-        self._upload_dataset(collection_name)
+        self._upload_dataset(
+            collection_name,
+            recreate_collection=lambda recreate_client: self._recreate_collection(
+                recreate_client,
+                collection_name=collection_name,
+                index_type=IndexType.INDEX_TYPE_IVF_FLAT,
+                ivf_config=IvfConfigDiff(
+                    nlist=nlist,
+                    nprobe=nprobe,
+                    training_sample_size=min(self.settings.vector_count, max(10_000, nlist * 64)),
+                ),
+            ),
+        )
         with self._client() as post_client:
             # On the validated Actian VectorAI DB 1.0.0 image, IVF collections did not
             # reliably return results until the index was explicitly rebuilt and reopened.
             post_client.vde.rebuild_index(collection_name)
             post_client.vde.open_collection(collection_name)
+        self._wait_for_collection_searchable(collection_name, reference_collection=self._flat_collection_name())
         build_time_s = time.perf_counter() - start
         with self._client() as post_client:
             metadata = self._write_metadata(metadata_path, build_time_s, self._collection_size_mb(post_client, collection_name))
@@ -300,25 +334,60 @@ class ActianBackend:
         hnsw_config: HnswConfigDiff | None = None,
         ivf_config: IvfConfigDiff | None = None,
     ) -> None:
-        if client.collections.exists(collection_name):
-            client.collections.delete(collection_name)
-        client.collections.create(
-            collection_name,
-            vectors_config=VectorParams(size=self.dimension, distance=Distance.Euclid),
-            index_type=index_type,
-            hnsw_config=hnsw_config,
-            ivf_config=ivf_config,
-        )
+        def perform(recreate_client: VectorAIClient) -> None:
+            if recreate_client.collections.exists(collection_name):
+                recreate_client.collections.delete(collection_name)
+            recreate_client.collections.create(
+                collection_name,
+                vectors_config=VectorParams(size=self.dimension, distance=Distance.Euclid),
+                index_type=index_type,
+                hnsw_config=hnsw_config,
+                ivf_config=ivf_config,
+            )
 
-    def _upload_dataset(self, collection_name: str) -> None:
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if attempt == 1:
+                    perform(client)
+                else:
+                    with self._client() as retry_client:
+                        perform(retry_client)
+                return
+            except (ChannelClosedError, VectorAIConnectionError, VectorAIError) as exc:
+                if isinstance(exc, VectorAIError) and exc.code not in {408, 500, 503}:
+                    raise
+                if attempt == max_attempts:
+                    raise
+                self._wait_for_service(timeout_s=30.0)
+                time.sleep(min(5.0, 1.0 * attempt))
+        raise RuntimeError(f"Actian collection recreation failed for {collection_name!r}.")
+
+    def _upload_dataset(self, collection_name: str, recreate_collection: Any) -> None:
         xb = np.ascontiguousarray(self.dataset[0][: self.settings.vector_count], dtype=np.float32)
         batch_size = 1_024
-        for start_index in range(0, len(xb), batch_size):
-            batch = [
-                PointStruct(id=start_index + offset, vector=vector.tolist())
-                for offset, vector in enumerate(xb[start_index : start_index + batch_size], start=0)
-            ]
-            self._upsert_batch_with_retry(collection_name, batch, start_index)
+        max_upload_attempts = 3
+        for upload_attempt in range(1, max_upload_attempts + 1):
+            restart_required = False
+            for start_index in range(0, len(xb), batch_size):
+                batch = [
+                    PointStruct(id=start_index + offset, vector=vector.tolist())
+                    for offset, vector in enumerate(xb[start_index : start_index + batch_size], start=0)
+                ]
+                try:
+                    self._upsert_batch_with_retry(collection_name, batch, start_index)
+                except CollectionNotFoundError:
+                    if upload_attempt == max_upload_attempts:
+                        raise
+                    self._wait_for_service()
+                    with self._client() as recreate_client:
+                        recreate_collection(recreate_client)
+                    restart_required = True
+                    break
+            if not restart_required:
+                return
+
+        raise RuntimeError(f"Actian dataset upload failed for collection {collection_name!r}.")
 
     def _upsert_batch_with_retry(self, collection_name: str, batch: list[PointStruct], start_index: int) -> None:
         max_attempts = 4
@@ -327,6 +396,8 @@ class ActianBackend:
                 with self._client() as client:
                     client.points.upsert(collection_name, batch, wait=True)
                 return
+            except CollectionNotFoundError:
+                raise
             except (ChannelClosedError, VectorAIConnectionError, VectorAIError) as exc:
                 if isinstance(exc, VectorAIError) and exc.code not in {500, 503}:
                     raise
@@ -346,6 +417,38 @@ class ActianBackend:
             except (ChannelClosedError, VectorAIConnectionError, VectorAIError):
                 time.sleep(0.5)
         raise RuntimeError("Actian VectorAI DB did not become healthy again after a transient disconnect.")
+
+    def _wait_for_collection_searchable(
+        self,
+        collection_name: str,
+        reference_collection: str | None = None,
+        *,
+        timeout_s: float = 45.0,
+        k: int = 10,
+    ) -> None:
+        deadline = time.monotonic() + timeout_s
+        probe_queries = np.ascontiguousarray(self.dataset[1][:3], dtype=np.float32)
+        while time.monotonic() < deadline:
+            try:
+                with self._client() as client:
+                    if reference_collection is None:
+                        results = client.points.search(collection_name, vector=probe_queries[0].tolist(), limit=1)
+                        if results:
+                            return
+                    else:
+                        total_overlap = 0
+                        for query in probe_queries:
+                            reference = client.points.search(reference_collection, vector=query.tolist(), limit=k)
+                            candidate = client.points.search(collection_name, vector=query.tolist(), limit=k)
+                            reference_ids = {int(result.id) for result in reference}
+                            candidate_ids = {int(result.id) for result in candidate}
+                            total_overlap += len(reference_ids & candidate_ids)
+                        if total_overlap > 0:
+                            return
+            except (ChannelClosedError, VectorAIConnectionError, VectorAIError):
+                pass
+            time.sleep(0.5)
+        raise RuntimeError(f"Actian collection {collection_name!r} did not become searchable after rebuild.")
 
     def _collection_size_mb(self, client: VectorAIClient, collection_name: str) -> float:
         stats = client.vde.get_stats(collection_name)
