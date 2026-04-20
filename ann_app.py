@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from ann_actian import ActianBackend
-from ann_backend import AnnBackend, BackendSettings, ProgressUpdate, RunConfig, recommended_ivf_nprobe
+from ann_backend import IVF_NPROBE_OPTIONS, AnnBackend, BackendSettings, ProgressUpdate, RunConfig, default_ivf_nprobe
 from ann_faiss import FaissBackend
 from ann_pgvector import PgvectorBackend
 
@@ -24,9 +24,8 @@ CSS_PATH = Path(".streamlit/styles.css")
 INITIAL_CACHE_LOCK_PATH = CACHE_DIR / ".initial_cache.lock"
 DEFAULT_HNSW_M = 32
 DEFAULT_HNSW_EF_CONSTRUCTION = 200
-DEFAULT_HNSW_EF_SEARCH = 64
+DEFAULT_HNSW_EF_SEARCH = 20
 DEFAULT_IVF_NLIST = 1024
-DEFAULT_IVF_NPROBE = 32
 DEFAULT_QUERY_COUNT = 1_000
 DEFAULT_PGVECTOR_QUERY_COUNT = 500
 DEFAULT_VECTOR_COUNT = 1_000_000
@@ -38,7 +37,6 @@ DEFAULT_PGVECTOR_ADMIN_DATABASE_URL = "postgresql:///postgres"
 DEFAULT_PGVECTOR_MAINTENANCE_WORK_MEM = "512MB"
 DEFAULT_ACTIAN_VECTORAI_URL = "localhost:50051"
 DEFAULT_ACTIAN_VECTORAI_DATA_DIR = "data/actian-vectorai"
-IVF_NPROBE_OPTIONS = [1, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128]
 
 
 def load_env_file(path: Path = ENV_PATH) -> None:
@@ -96,12 +94,6 @@ def default_include_ivf(backend_name: str) -> bool:
 
 def default_hnsw_ef_search(backend_name: str) -> int:
     return DEFAULT_HNSW_EF_SEARCH
-
-
-def default_ivf_nprobe(nlist: int) -> int:
-    target = min(max(1, recommended_ivf_nprobe(nlist)), IVF_NPROBE_OPTIONS[-1])
-    return max(option for option in IVF_NPROBE_OPTIONS if option <= target)
-
 
 def default_ivf_nlist_value(backend: AnnBackend) -> int:
     options = backend.available_nlist_options()
@@ -314,10 +306,10 @@ def render_controls() -> RunConfig | None:
             )
             hnsw_ef_search = st.slider(
                 "Search effort (efSearch)",
-                min_value=16,
-                max_value=256,
+                min_value=8,
+                max_value=96,
                 value=default_hnsw_ef_search(BACKEND_NAME),
-                step=8,
+                step=4,
                 help=(
                     "How many candidates are explored during search. "
                     "Higher values improve recall by exploring more options, "
@@ -340,7 +332,7 @@ def render_controls() -> RunConfig | None:
                 help=(
                     "How many coarse clusters IVF creates when it groups the vectors. "
                     "Higher values make search more selective, but increase build cost and make tuning more important. "
-                    "The default starts near the square-root scale of the dataset size, and the default nprobe grows with the square-root scale of nlist. "
+                    "The default starts near the square-root scale of the dataset size, and the default nprobe grows more conservatively than the square-root scale of nlist so the starting point stays near the usual high-recall range instead of pushing toward maximum recall. "
                     "Tune nprobe first; tune nlist when the whole latency/recall curve still looks wrong."
                 ),
             )

@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+IVF_NPROBE_OPTIONS = [1, 2, 4, 6, 8, 12, 16, 20, 24, 32, 48, 64, 96, 128]
+
 
 @dataclass(frozen=True)
 class ProgressUpdate:
@@ -83,3 +85,11 @@ def recommended_ivf_nlist_options(vector_count: int, *, max_option: int = 4096) 
 
 def recommended_ivf_nprobe(nlist: int) -> int:
     return max(1, int(math.sqrt(nlist)))
+
+
+def default_ivf_nprobe(nlist: int) -> int:
+    target = max(1, int(round(math.sqrt(nlist) * 0.4)))
+    eligible_options = [option for option in IVF_NPROBE_OPTIONS if option <= nlist]
+    if not eligible_options:
+        return min(1, nlist)
+    return min(eligible_options, key=lambda option: (abs(option - target), -option))

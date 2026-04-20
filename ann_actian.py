@@ -23,7 +23,7 @@ from actian_vectorai import (
 from actian_vectorai.models.enums import Distance, IndexType
 from actian_vectorai.models.vde import IvfConfigDiff
 
-from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig, recommended_ivf_nlist_options, recommended_ivf_nprobe
+from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig, default_ivf_nprobe, recommended_ivf_nlist_options
 from ann_faiss import load_sift_hdf5, overlap_recall_at_k, percentile
 
 
@@ -59,7 +59,7 @@ class ActianBackend:
         return recommended_ivf_nlist_options(self.settings.vector_count, max_option=1024)
 
     def default_ivf_nprobe(self, nlist: int) -> int:
-        return min(max(1, recommended_ivf_nprobe(nlist)), nlist)
+        return default_ivf_nprobe(nlist)
 
     def initial_artifacts_exist(self) -> bool:
         try:

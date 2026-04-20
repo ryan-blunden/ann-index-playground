@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ann_backend import BackendSettings, RunConfig
+from ann_backend import BackendSettings, RunConfig, default_ivf_nprobe
 from ann_faiss import FaissBackend
 
 
@@ -92,3 +92,15 @@ def test_run_comparison_returns_expected_rows_and_metrics(faiss_backend: FaissBa
     assert (results["p95_latency_ms"] > 0).all()
     assert results.loc[results["family"] == "Flat", "recall_at_10"].iloc[0] == pytest.approx(1.0)
     assert (results["speedup_vs_flat"] > 0).all()
+
+
+@pytest.mark.parametrize(
+    ("nlist", "expected_nprobe"),
+    [
+        (64, 4),
+        (256, 8),
+        (1024, 12),
+    ],
+)
+def test_default_ivf_nprobe_targets_high_recall_without_defaulting_to_max(nlist: int, expected_nprobe: int) -> None:
+    assert default_ivf_nprobe(nlist) == expected_nprobe
