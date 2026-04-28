@@ -107,7 +107,7 @@ docker compose -f docker-compose.actian-vectorai.yml up -d
 Install the official Python SDK:
 
 ```bash
-pip install actian-vectorai
+pip install actian-vectorai-client
 ```
 
 Example `.env`:
@@ -124,6 +124,7 @@ Actian note:
 
 - gRPC server: `localhost:6574`
 - LocalUI: `localhost:6575`
+- Actian data is ephemeral in this repo; `just actian-up` starts with a clean store
 - the current Actian release used by this app is HNSW-only
 - IVF controls are hidden for Actian because the server rejects IVF collection creation
 

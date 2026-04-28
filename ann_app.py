@@ -3,14 +3,15 @@ from __future__ import annotations
 import fcntl
 import os
 import time
-from dataclasses import replace
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+from actian_vectorai import ChannelClosedError, VectorAIConnectionError, VectorAIError
 
 from ann_actian import ActianBackend
 from ann_backend import IVF_NPROBE_OPTIONS, AnnBackend, BackendSettings, ProgressUpdate, RunConfig, default_ivf_nprobe
@@ -97,6 +98,7 @@ def default_include_ivf(backend_name: str) -> bool:
 
 def default_hnsw_ef_search(backend_name: str) -> int:
     return DEFAULT_HNSW_EF_SEARCH
+
 
 def default_ivf_nlist_value(backend: AnnBackend) -> int:
     options = backend.available_nlist_options()
@@ -443,7 +445,8 @@ def render_results(history: list[dict[str, Any]]) -> None:
 
 
 def scroll_to_results() -> None:
-    st.html("""
+    st.html(
+        """
         <script>
         const scrollToResults = () => {
           const anchor = document.getElementById("results-anchor");
@@ -478,7 +481,9 @@ def scroll_to_results() -> None:
           });
         });
         </script>
-        """, unsafe_allow_javascript=True)
+        """,
+        unsafe_allow_javascript=True,
+    )
 
 
 def main() -> None:
@@ -511,7 +516,14 @@ def main() -> None:
                     if waiting_for_other_session:
                         progress_bar.progress(0.1)
                         status_text.write("Cache lock acquired. Checking whether any build work is still needed...")
-                    BACKEND.ensure_initial_artifacts(progress=update_progress)
+                    try:
+                        BACKEND.ensure_initial_artifacts(progress=update_progress)
+                    except (ChannelClosedError, VectorAIConnectionError, VectorAIError) as exc:
+                        st.error(
+                            "Actian VectorAI DB is not reachable yet at " f"`{ACTIAN_VECTORAI_URL}`. Start the Docker service and refresh this page."
+                        )
+                        st.caption(str(exc))
+                        st.stop()
                     st.session_state["initial_cache_ready"] = True
             st.rerun()
 

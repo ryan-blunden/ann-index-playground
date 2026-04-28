@@ -5,7 +5,6 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-
 from actian_vectorai import VectorAIClient
 
 from ann_actian import ActianBackend

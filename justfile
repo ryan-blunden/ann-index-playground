@@ -18,6 +18,7 @@ ui:
     uv run streamlit run ann_app.py
 
 actian-up:
+    docker compose -f docker-compose.actian-vectorai.yml down
     docker compose -f docker-compose.actian-vectorai.yml up -d
 
 actian-down:

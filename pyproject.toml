@@ -15,7 +15,7 @@ dependencies = [
     "streamlit",
     "psycopg[binary]>=3.3.3",
     "pgvector>=0.4.2",
-    "actian-vectorai",
+    "actian-vectorai-client",
 ]
 
 [build-system]
@@ -80,6 +80,3 @@ max-attributes = 10
 
 [tool.pylint.typecheck]
 generated-members = ["faiss.*"]
-
-[tool.uv.sources]
-actian-vectorai = { url = "https://raw.githubusercontent.com/hackmamba-io/actian-vectorAI-db-beta/main/actian_vectorai-0.1.0b2-py3-none-any.whl" }

@@ -6,13 +6,8 @@ services:
       - "6573:6573"
       - "6574:6574"
       - "6575:6575"
-    volumes:
-      - actian-vectorai-data-v2:/data
     restart: unless-stopped
     stop_grace_period: 2m
     environment:
       - ACCEPT_ACTIAN_VECTORAI_EULA=YES
       - ACTIAN_VECTORAI_ACCEPT_EULA=YES
-
-volumes:
-  actian-vectorai-data-v2:
