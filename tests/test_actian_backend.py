@@ -5,6 +5,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+
 from actian_vectorai import VectorAIClient
 
 from ann_actian import ActianBackend
@@ -17,7 +18,7 @@ def actian_backend(tmp_path: Path) -> Generator[ActianBackend]:
     dataset_path = tmp_path / "tiny-sift.hdf5"
     write_synthetic_dataset(dataset_path)
 
-    service_url = "localhost:50051"
+    service_url = "localhost:6574"
     try:
         with VectorAIClient(service_url, timeout=2.0) as client:
             client.health_check()
@@ -30,7 +31,7 @@ def actian_backend(tmp_path: Path) -> Generator[ActianBackend]:
         vector_count=512,
         service_url=service_url,
         include_hnsw=True,
-        include_ivf=True,
+        include_ivf=False,
         default_hnsw_m=16,
         default_hnsw_ef_construction=80,
         default_ivf_nlist=64,
@@ -40,11 +41,9 @@ def actian_backend(tmp_path: Path) -> Generator[ActianBackend]:
     yield backend
 
     with VectorAIClient(service_url, timeout=5.0) as client:
-        default_ivf_nprobe = backend.default_ivf_nprobe(settings.default_ivf_nlist)
         for collection_name in [
             backend._flat_collection_name(),
             backend._hnsw_collection_name(settings.default_hnsw_m, settings.default_hnsw_ef_construction),
-            backend._ivf_collection_name(settings.default_ivf_nlist, default_ivf_nprobe),
         ]:
             if client.collections.exists(collection_name):
                 client.collections.delete(collection_name)
@@ -62,17 +61,16 @@ def test_actian_initial_artifacts_are_built_with_progress(actian_backend: Actian
     assert any("Actian" in message for message in progress_messages)
     assert any("Flat" in message for message in progress_messages)
     assert any("HNSW" in message for message in progress_messages)
-    assert any("IVF" in message for message in progress_messages)
+    assert not any("IVF" in message for message in progress_messages)
 
 
 def test_actian_cache_summaries_report_built_metadata(actian_backend: ActianBackend) -> None:
     assert actian_backend.hnsw_summary(16, 80) == "Cache not built yet."
-    assert actian_backend.ivf_summary(64, 8) == "Cache not built yet."
+    assert actian_backend.settings.include_ivf is False
 
     actian_backend.ensure_initial_artifacts()
 
     assert "Prep time:" in actian_backend.hnsw_summary(16, 80)
-    assert "Prep time:" in actian_backend.ivf_summary(64, 8)
 
 
 def test_actian_run_comparison_returns_expected_rows_and_metrics(actian_backend: ActianBackend) -> None:
@@ -87,12 +85,12 @@ def test_actian_run_comparison_returns_expected_rows_and_metrics(actian_backend:
             hnsw_m=16,
             hnsw_ef_construction=80,
             hnsw_ef_search=32,
-            ivf_nlist=64,
-            ivf_nprobe=8,
+            ivf_nlist=None,
+            ivf_nprobe=None,
         )
     )
 
-    assert list(results["family"]) == ["Flat", "HNSW", "IVF"]
+    assert list(results["family"]) == ["Flat", "HNSW"]
     assert metadata["base_vectors"] == 512
     assert metadata["query_count"] == 32
     assert (results["avg_latency_ms"] > 0).all()

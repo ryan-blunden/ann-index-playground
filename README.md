@@ -104,15 +104,28 @@ Or:
 docker compose -f docker-compose.actian-vectorai.yml up -d
 ```
 
+Install the official Python SDK:
+
+```bash
+pip install actian-vectorai
+```
+
 Example `.env`:
 
 ```env
 ANN_BACKEND=actian
-ACTIAN_VECTORAI_URL=localhost:50051
+ACTIAN_VECTORAI_URL=localhost:6574
 VECTOR_COUNT=1000000
 INCLUDE_HNSW=true
-INCLUDE_IVF=true
+INCLUDE_IVF=false
 ```
+
+Actian note:
+
+- gRPC server: `localhost:6574`
+- LocalUI: `localhost:6575`
+- the current Actian release used by this app is HNSW-only
+- IVF controls are hidden for Actian because the server rejects IVF collection creation
 
 Stop the service:
 
@@ -131,13 +144,15 @@ INCLUDE_HNSW=true
 INCLUDE_IVF=true
 ```
 
+Actian-specific runs should keep `INCLUDE_IVF=false`.
+
 Backend-specific settings:
 
 ```env
 PGVECTOR_DATABASE_URL=postgresql:///ann_indexes_pgvector
 PGVECTOR_ADMIN_DATABASE_URL=postgresql:///postgres
 PGVECTOR_MAINTENANCE_WORK_MEM=512MB
-ACTIAN_VECTORAI_URL=localhost:50051
+ACTIAN_VECTORAI_URL=localhost:6574
 ```
 
 Restart the app after changing `.env`.
@@ -150,6 +165,11 @@ Each run compares:
 - `HNSW`
 - `IVF`
 
+Actian currently compares:
+
+- `Flat`
+- `HNSW`
+
 Metrics:
 
 - average single-query latency
@@ -161,6 +181,8 @@ Current shared UI defaults:
 
 - `HNSW`: `M=32`, `efConstruction=200`, `efSearch=20`
 - `IVF`: `nlist=1024`, `nprobe=12`
+
+Actian uses the HNSW defaults only.
 
 The controls are split into:
 
@@ -198,7 +220,7 @@ Changing these does require rebuilds:
 
 Actian note:
 
-- the current demo materializes separate IVF collections for each `nlist` / `nprobe` pair
+- the current Actian release does not support IVF collections in this app
 
 ## Developer commands
 

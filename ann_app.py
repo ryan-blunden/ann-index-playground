@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import os
 import time
+from dataclasses import replace
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -35,7 +36,7 @@ DEFAULT_BACKEND = "faiss"
 DEFAULT_PGVECTOR_DATABASE_URL = "postgresql:///ann_indexes_pgvector"
 DEFAULT_PGVECTOR_ADMIN_DATABASE_URL = "postgresql:///postgres"
 DEFAULT_PGVECTOR_MAINTENANCE_WORK_MEM = "512MB"
-DEFAULT_ACTIAN_VECTORAI_URL = "localhost:50051"
+DEFAULT_ACTIAN_VECTORAI_URL = "localhost:6574"
 DEFAULT_ACTIAN_VECTORAI_DATA_DIR = "data/actian-vectorai"
 
 
@@ -89,6 +90,8 @@ def default_include_hnsw(backend_name: str) -> bool:
 
 
 def default_include_ivf(backend_name: str) -> bool:
+    if backend_name == "actian":
+        return False
     return DEFAULT_INCLUDE_IVF
 
 
@@ -135,7 +138,7 @@ def build_backend() -> AnnBackend:
     if BACKEND_NAME == "pgvector":
         return PgvectorBackend(settings)
     if BACKEND_NAME == "actian":
-        return ActianBackend(settings)
+        return ActianBackend(replace(settings, include_ivf=False))
     raise ValueError(f"Unsupported ANN_BACKEND value: {BACKEND_NAME!r}")
 
 
@@ -215,7 +218,7 @@ def to_card_html(row: pd.Series) -> str:
 
 def backend_display_name() -> str:
     if BACKEND_NAME == "actian":
-        return "Actian VectorAI DB"
+        return "Actian VectorAI DB (HNSW only)"
     if BACKEND_NAME == "pgvector":
         return "pgvector"
     return "FAISS"
@@ -429,32 +432,53 @@ def append_results_to_csv(results: pd.DataFrame, metadata: dict[str, Any]) -> No
 
 def render_results(history: list[dict[str, Any]]) -> None:
     st.markdown('<div id="results-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="run-history">', unsafe_allow_html=True)
     total_runs = len(history)
     for run_index, entry in enumerate(history, start=1):
-        st.markdown(
-            (
-                '<div class="run-block"><div class="run-block-header">'
-                f'<div class="run-block-title">Run {total_runs - run_index + 1}</div>'
-                "</div></div>"
-            ),
-            unsafe_allow_html=True,
-        )
-        render_cards(entry["results"])
-    st.markdown("</div>", unsafe_allow_html=True)
+        run_number = total_runs - run_index + 1
+        label_column, results_column = st.columns([0.75, 11.25], gap="small", vertical_alignment="top")
+        with label_column:
+            st.markdown(f'<div class="run-block-title">Run {run_number}</div>', unsafe_allow_html=True)
+        with results_column:
+            render_cards(entry["results"])
 
 
 def scroll_to_results() -> None:
     st.html("""
         <script>
-        window.requestAnimationFrame(() => {
+        const scrollToResults = () => {
           const anchor = document.getElementById("results-anchor");
-          if (anchor) {
-            anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (!anchor) {
+            return;
           }
+
+          const findScrollParent = (node) => {
+            let parent = node.parentElement;
+            while (parent && parent !== document.body) {
+              const style = window.getComputedStyle(parent);
+              const overflowY = style.overflowY;
+              const scrollable = /(auto|scroll)/.test(overflowY) && parent.scrollHeight > parent.clientHeight;
+              if (scrollable) {
+                return parent;
+              }
+              parent = parent.parentElement;
+            }
+            return document.scrollingElement || document.documentElement;
+          };
+
+          const scrollParent = findScrollParent(anchor);
+          const parentRect = scrollParent.getBoundingClientRect ? scrollParent.getBoundingClientRect() : { top: 0 };
+          const anchorRect = anchor.getBoundingClientRect();
+          const top = anchorRect.top - parentRect.top + scrollParent.scrollTop - 16;
+          scrollParent.scrollTo({ top, behavior: "smooth" });
+        };
+
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            setTimeout(scrollToResults, 150);
+          });
         });
         </script>
-        """)
+        """, unsafe_allow_javascript=True)
 
 
 def main() -> None:

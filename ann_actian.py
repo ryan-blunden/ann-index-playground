@@ -3,16 +3,22 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from dataclasses import replace
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from actian_vectorai.proto import actian_vectorai_points_pb2 as points_pb
+
 from actian_vectorai import (
     ChannelClosedError,
     CollectionNotFoundError,
+    Distance,
     HnswConfigDiff,
+    IndexType,
+    IvfConfigDiff,
     PointStruct,
     SearchParams,
     VectorAIClient,
@@ -20,8 +26,6 @@ from actian_vectorai import (
     VectorAIError,
     VectorParams,
 )
-from actian_vectorai.models.enums import Distance, IndexType
-from actian_vectorai.models.vde import IvfConfigDiff
 
 from ann_backend import BackendSettings, ProgressCallback, ProgressUpdate, RunConfig, default_ivf_nprobe, recommended_ivf_nlist_options
 from ann_faiss import load_sift_hdf5, overlap_recall_at_k, percentile
@@ -32,7 +36,8 @@ class ActianBackend:
     client_timeout_s = 180.0
 
     def __init__(self, settings: BackendSettings) -> None:
-        self.settings = settings
+        # The current Actian release used by this app is HNSW-only.
+        self.settings = replace(settings, include_ivf=False)
         self.settings.cache_dir.mkdir(parents=True, exist_ok=True)
         if not self.settings.service_url:
             raise ValueError("service_url is required for the Actian backend.")
@@ -230,7 +235,7 @@ class ActianBackend:
     def _collection_ready(self, client: VectorAIClient, collection_name: str) -> bool:
         if not client.collections.exists(collection_name):
             return False
-        return client.points.count(collection_name) == self.settings.vector_count
+        return client.vde.get_vector_count(collection_name) == self.settings.vector_count
 
     def _ensure_flat_collection(self, client: VectorAIClient) -> dict[str, float]:
         collection_name = self._flat_collection_name()
@@ -394,7 +399,13 @@ class ActianBackend:
         for attempt in range(1, max_attempts + 1):
             try:
                 with self._client() as client:
-                    client.points.upsert(collection_name, batch, wait=True)
+                    req = points_pb.UpsertPoints(collection_name=collection_name)
+                    req.points.extend(point.to_proto() for point in batch)
+
+                    async def perform_upsert() -> Any:
+                        return await client._async_client.points._stub.Upsert(req)
+
+                    client._loop.run(perform_upsert())
                 return
             except CollectionNotFoundError:
                 raise
